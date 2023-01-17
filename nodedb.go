@@ -829,6 +829,9 @@ func (ndb *nodeDB) traverseOrphans(version int64, fn func(*Node) error) error {
 	for prevIter.Valid() {
 		for orgNode == nil && curIter.Valid() {
 			node := curIter.GetNode()
+			// if the node version in the n+1 iterator is <= version:
+			// - skip the rest of the subtree
+			// - set orgNode = the node
 			if node.version <= version {
 				curIter.Next(true)
 				orgNode = node

@@ -2,6 +2,7 @@
 package iavl
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
 	"flag"
@@ -13,10 +14,10 @@ import (
 	"testing"
 
 	db "github.com/cosmos/cosmos-db"
+	iavlrand "github.com/cosmos/iavl/internal/rand"
+	"github.com/emicklei/dot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	iavlrand "github.com/cosmos/iavl/internal/rand"
 )
 
 var (
@@ -1884,4 +1885,108 @@ func TestNodeCacheStatisic(t *testing.T) {
 			require.Equal(t, tc.expectCacheMissCnt, int(opts.Stat.GetCacheMissCnt()))
 		})
 	}
+}
+
+func graphvizRenderNode(node *Node) string {
+	if node.isLeaf() {
+		return fmt.Sprintf("%v:%v\nv%v", node.key, node.value, node.version)
+	} else {
+		return fmt.Sprintf("%v:%v\nv%v", node.subtreeHeight, node.key, node.version)
+	}
+}
+
+type dotState struct {
+	gviz  *dot.Graph
+	itree *ImmutableTree
+	count int
+}
+
+func iterateGraphvizTree(state *dotState, node *Node, parent *dot.Node, dir string) {
+	state.count++
+	label := graphvizRenderNode(node)
+
+	n := state.gviz.Node(label)
+	if parent != nil {
+		parent.Edge(n, dir)
+	}
+
+	var leftNode, rightNode *Node
+
+	if node.leftNode != nil {
+		leftNode = node.leftNode
+	} else if node.leftHash != nil {
+		in, err := node.getLeftNode(state.itree)
+		if err == nil {
+			leftNode = in
+		}
+	}
+
+	if node.rightNode != nil {
+		rightNode = node.rightNode
+	} else if node.rightHash != nil {
+		in, err := node.getRightNode(state.itree)
+		if err == nil {
+			rightNode = in
+		}
+	}
+
+	if leftNode != nil {
+		iterateGraphvizTree(state, leftNode, &n, "l")
+	}
+	if rightNode != nil {
+		iterateGraphvizTree(state, rightNode, &n, "r")
+	}
+}
+
+func GraphVizTree(tree *MutableTree, filename string) {
+	f, _ := os.Create("/tmp/tree_" + filename + ".dot")
+	defer f.Close()
+
+	state := &dotState{
+		gviz:  dot.NewGraph(dot.Directed),
+		itree: tree.ImmutableTree,
+	}
+	iterateGraphvizTree(state, tree.root, nil, "")
+
+	fmt.Printf("%v nodes\n", state.count)
+	w := bufio.NewWriter(f)
+	fmt.Fprintln(w, state.gviz.String())
+	w.Flush()
+}
+
+func TestNodeDB_DeleteVersionsTo(t *testing.T) {
+	tree, _ := getTestTree(0)
+	for i := 0; i < 20; i++ {
+		tree.Set([]byte{byte(i)}, []byte{byte(i)})
+	}
+	GraphVizTree(tree, "one")
+
+	tree.SaveVersion()
+	tree.Set([]byte{10}, []byte{10, 1})
+	GraphVizTree(tree, "two")
+	tree.SaveVersion()
+
+	tree.Set([]byte{8}, []byte{10, 1})
+	tree.Set([]byte{2, 1}, []byte{2})
+	tree.SaveVersion()
+	GraphVizTree(tree, "three")
+
+	tree.Remove([]byte{16})
+	tree.SaveVersion()
+	GraphVizTree(tree, "four")
+
+	tree.Set([]byte{10}, []byte{10})
+	tree.Remove([]byte{11})
+	tree.Set([]byte{10, 1}, []byte{10})
+	tree.SaveVersion()
+	GraphVizTree(tree, "five")
+
+	tree.ndb.traverseOrphans(4, func(node *Node) error {
+		if node.isLeaf() {
+			fmt.Printf("leaf: %v:%v v%v\n", node.key, node.value, node.version)
+		} else {
+			fmt.Printf("branch: %v:%v v%v\n", node.subtreeHeight, node.key, node.version)
+		}
+		return nil
+	})
 }
