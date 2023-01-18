@@ -804,6 +804,14 @@ func (ndb *nodeDB) decrVersionReaders(version int64) {
 	}
 }
 
+func renderNode(node *Node) string {
+	if node.isLeaf() {
+		return fmt.Sprintf("%v:%v v%v", node.key, node.value, node.version)
+	} else {
+		return fmt.Sprintf("%v:%v v%v", node.subtreeHeight, node.key, node.version)
+	}
+}
+
 // traverseOrphans traverses orphans which removed by the updates of the version (n+1).
 func (ndb *nodeDB) traverseOrphans(version int64, fn func(*Node) error) error {
 	cRoot, err := ndb.getRoot(version + 1)
@@ -829,10 +837,12 @@ func (ndb *nodeDB) traverseOrphans(version int64, fn func(*Node) error) error {
 	for prevIter.Valid() {
 		for orgNode == nil && curIter.Valid() {
 			node := curIter.GetNode()
+			//fmt.Printf("curIter: %s\n", renderNode(node))
 			// if the node version in the n+1 iterator is <= version:
 			// - skip the rest of the subtree
 			// - set orgNode = the node
 			if node.version <= version {
+				fmt.Printf("orgNode: %s\n", renderNode(node))
 				curIter.Next(true)
 				orgNode = node
 			} else {
@@ -840,8 +850,10 @@ func (ndb *nodeDB) traverseOrphans(version int64, fn func(*Node) error) error {
 			}
 		}
 		pNode := prevIter.GetNode()
+		fmt.Printf(" pNode: %s\n", renderNode(pNode))
 
 		if orgNode != nil && bytes.Equal(pNode.hash, orgNode.hash) {
+			fmt.Println("orgNode == pNode, skip")
 			prevIter.Next(true)
 			orgNode = nil
 		} else {

@@ -1954,6 +1954,21 @@ func GraphVizTree(tree *MutableTree, filename string) {
 	w.Flush()
 }
 
+func iterateTree(version int64, tree *MutableTree) {
+	root, _ := tree.ndb.getRoot(version)
+	iter, _ := NewNodeIterator(root, tree.ndb)
+	for iter.Valid() {
+		node := iter.GetNode()
+		if node.isLeaf() {
+			fmt.Printf("iter: %v:%v v%v\n", node.key, node.value, node.version)
+		}
+		//else {
+		//	fmt.Printf("branch: %v:%v v%v\n", node.subtreeHeight, node.key, node.version)
+		//}
+		iter.Next(false)
+	}
+}
+
 func TestNodeDB_DeleteVersionsTo(t *testing.T) {
 	tree, _ := getTestTree(0)
 	for i := 0; i < 20; i++ {
@@ -1978,10 +1993,26 @@ func TestNodeDB_DeleteVersionsTo(t *testing.T) {
 	tree.Set([]byte{10}, []byte{10})
 	tree.Remove([]byte{11})
 	tree.Set([]byte{10, 1}, []byte{10})
+
+	tree.Remove([]byte{12})
+	tree.Remove([]byte{13})
+	tree.Remove([]byte{14})
+	tree.Remove([]byte{15})
+	tree.Remove([]byte{18})
+	tree.Remove([]byte{19})
+
 	tree.SaveVersion()
 	GraphVizTree(tree, "five")
 
-	tree.ndb.traverseOrphans(4, func(node *Node) error {
+	//iterateTree(4, tree)
+
+	tree.Set([]byte{18}, []byte{12})
+	tree.Set([]byte{17}, []byte{12})
+	tree.Set([]byte{17}, []byte{17})
+	tree.SaveVersion()
+	GraphVizTree(tree, "six")
+
+	tree.ndb.traverseOrphans(5, func(node *Node) error {
 		if node.isLeaf() {
 			fmt.Printf("leaf: %v:%v v%v\n", node.key, node.value, node.version)
 		} else {
