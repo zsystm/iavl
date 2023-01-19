@@ -843,7 +843,7 @@ func (ndb *nodeDB) traverseOrphans(version int64, fn func(*Node) error) error {
 			// - skip the rest of the subtree
 			// - set orgNode = the node
 			if node.version <= version {
-				fmt.Printf("orgNode: %s\n", renderNode(node))
+				//fmt.Printf("orgNode: %s\n", renderNode(node))
 				curIter.Next(true)
 				orgNode = node
 			} else {
@@ -851,10 +851,10 @@ func (ndb *nodeDB) traverseOrphans(version int64, fn func(*Node) error) error {
 			}
 		}
 		pNode := prevIter.GetNode()
-		fmt.Printf(" pNode: %s\n", renderNode(pNode))
+		//fmt.Printf(" pNode: %s\n", renderNode(pNode))
 
 		if orgNode != nil && bytes.Equal(pNode.hash, orgNode.hash) {
-			fmt.Println("orgNode == pNode, skip")
+			//fmt.Println("orgNode == pNode, skip")
 			prevIter.Next(true)
 			orgNode = nil
 		} else {
