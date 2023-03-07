@@ -99,7 +99,7 @@ func newNodeDB(db dbm.DB, cacheSize int, opts *Options) *nodeDB {
 
 // GetNode gets a node from memory or disk. If it is an inner node, it does not
 // load its children.
-func (ndb *nodeDB) GetNode(nk *NodeKey) (*Node, error) {
+func (ndb *nodeDB) GetNode(nk NodeKey) (*Node, error) {
 	ndb.mtx.Lock()
 	defer ndb.mtx.Unlock()
 
