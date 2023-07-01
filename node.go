@@ -553,6 +553,14 @@ func (node *Node) GetVersion() int64 {
 	return node.version
 }
 
+func (node *Node) GetValue() []byte {
+	return node.value
+}
+
+func (node *Node) IsLeaf() bool {
+	return node.isLeaf()
+}
+
 var (
 	ErrCloneLeafNode  = fmt.Errorf("attempt to copy a leaf node")
 	ErrEmptyChildHash = fmt.Errorf("found an empty child hash")
