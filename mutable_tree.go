@@ -1253,3 +1253,24 @@ func (tree *MutableTree) addOrphans(orphans []*Node) error {
 	}
 	return nil
 }
+
+// IsNextVersionDeleted answers the question: Given the current node at version n, is it deleted
+// in the next version n+1?
+// Similar to GetVersioned but it's lock-free and therefore faster for concurrent use.
+func (tree *MutableTree) IsNextVersionDeleted(node *Node) (bool, error) {
+	nextVersion := node.version + 1
+	nextRootHash, err := tree.ndb.getRoot(nextVersion)
+	if err != nil {
+		return false, err
+	}
+	if nextRootHash == nil {
+		return false, nil
+	}
+	nextRoot, err := tree.ndb.GetNode(nextRootHash)
+	if err != nil {
+		return false, err
+	}
+	// tree is only used to access the nodedb in traversal, so it's safe to pass the current one instead
+	// of the next one.
+	return nextRoot.has(tree.ImmutableTree, node.key)
+}

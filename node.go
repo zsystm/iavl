@@ -557,6 +557,10 @@ func (node *Node) GetValue() []byte {
 	return node.value
 }
 
+func (node *Node) GetLogicalKey() []byte {
+	return node.key
+}
+
 func (node *Node) IsLeaf() bool {
 	return node.isLeaf()
 }
