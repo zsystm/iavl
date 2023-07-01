@@ -548,6 +548,11 @@ func (node *Node) traverseInRange(tree *ImmutableTree, start, end []byte, ascend
 	return stop
 }
 
+// GetVersion returns the version of the node
+func (node *Node) GetVersion() int64 {
+	return node.version
+}
+
 var (
 	ErrCloneLeafNode  = fmt.Errorf("attempt to copy a leaf node")
 	ErrEmptyChildHash = fmt.Errorf("found an empty child hash")
