@@ -39,6 +39,9 @@ type MutableTree struct {
 	skipFastStorageUpgrade   bool // If true, the tree will work like no fast storage and always not upgrade fast storage
 
 	mtx sync.Mutex
+
+	// todo
+	rootsCache map[int64]*Node
 }
 
 // NewMutableTree returns a new tree with the specified cache size and datastore.
@@ -1254,22 +1257,39 @@ func (tree *MutableTree) addOrphans(orphans []*Node) error {
 	return nil
 }
 
+func (tree *MutableTree) InitRootsCache() error {
+	tree.mtx.Lock()
+	defer tree.mtx.Unlock()
+	ndb := tree.ndb
+	tree.rootsCache = make(map[int64]*Node)
+
+	err := ndb.traversePrefix(rootKeyFormat.Key(), func(k, v []byte) error {
+		var version int64
+		rootKeyFormat.Scan(k, &version)
+		buf, err := ndb.db.Get(ndb.nodeKey(v))
+		if err != nil {
+			return err
+		}
+		node, err := MakeNode(buf)
+		if err != nil {
+			return err
+		}
+		tree.rootsCache[version] = node
+		return nil
+	})
+	return err
+}
+
 // IsNextVersionDeleted answers the question: Given the current node at version n, is it deleted
 // in the next version n+1?
 // Similar to GetVersioned but it's lock-free and therefore faster for concurrent use.
 func (tree *MutableTree) IsNextVersionDeleted(node *Node) (bool, error) {
-	nextVersion := node.version + 1
-	nextRootHash, err := tree.ndb.getRoot(nextVersion)
-	if err != nil {
-		return false, err
-	}
-	if nextRootHash == nil {
+	nextRoot, ok := tree.rootsCache[node.version+1]
+	if !ok {
+		// TODO
 		return false, nil
 	}
-	nextRoot, err := tree.ndb.GetNode(nextRootHash)
-	if err != nil {
-		return false, err
-	}
+
 	// tree is only used to access the nodedb in traversal, so it's safe to pass the current one instead
 	// of the next one.
 	return nextRoot.has(tree.ImmutableTree, node.key)

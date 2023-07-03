@@ -108,20 +108,20 @@ func newNodeDB(db dbm.DB, cacheSize int, opts *Options) *nodeDB {
 // GetNode gets a node from memory or disk. If it is an inner node, it does not
 // load its children.
 func (ndb *nodeDB) GetNode(hash []byte) (*Node, error) {
-	ndb.mtx.Lock()
-	defer ndb.mtx.Unlock()
+	//ndb.mtx.Lock()
+	//defer ndb.mtx.Unlock()
 
 	if len(hash) == 0 {
 		return nil, ErrNodeMissingHash
 	}
 
-	// Check the cache.
-	if cachedNode := ndb.nodeCache.Get(hash); cachedNode != nil {
-		ndb.opts.Stat.IncCacheHitCnt()
-		return cachedNode.(*Node), nil
-	}
+	//Check the cache.
+	//if cachedNode := ndb.nodeCache.Get(hash); cachedNode != nil {
+	//	ndb.opts.Stat.IncCacheHitCnt()
+	//	return cachedNode.(*Node), nil
+	//}
 
-	ndb.opts.Stat.IncCacheMissCnt()
+	//ndb.opts.Stat.IncCacheMissCnt()
 
 	// Doesn't exist, load.
 	buf, err := ndb.db.Get(ndb.nodeKey(hash))
@@ -139,7 +139,7 @@ func (ndb *nodeDB) GetNode(hash []byte) (*Node, error) {
 
 	node.hash = hash
 	node.persisted = true
-	ndb.nodeCache.Add(node)
+	//ndb.nodeCache.Add(node)
 
 	return node, nil
 }
@@ -1008,6 +1008,7 @@ func (ndb *nodeDB) orphans() ([][]byte, error) {
 // Not efficient.
 // NOTE: DB cannot implement Size() because
 // mutations are not always synchronous.
+//
 //nolint:unused
 func (ndb *nodeDB) size() int {
 	size := 0
