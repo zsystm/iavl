@@ -76,19 +76,19 @@ func (nodes *delayedNodes) length() int {
 // 1. If it is not an delayed node (node.delayed == false) it immediately returns it.
 //
 // A. If the `node` is a branch node:
-// 1. If the traversal is postorder, then append the current node to the t.delayedNodes,
-//    with `delayed` set to false. This makes the current node returned *after* all the children
-//    are traversed, without being expanded.
-// 2. Append the traversable children nodes into the `delayedNodes`, with `delayed` set to true. This
-//    makes the children nodes to be traversed, and expanded with their respective children.
-// 3. If the traversal is preorder, (with the children to be traversed already pushed to the
-//    `delayedNodes`), returns the current node.
-// 4. Call `traversal.next()` to further traverse through the `delayedNodes`.
+//  1. If the traversal is postorder, then append the current node to the t.delayedNodes,
+//     with `delayed` set to false. This makes the current node returned *after* all the children
+//     are traversed, without being expanded.
+//  2. Append the traversable children nodes into the `delayedNodes`, with `delayed` set to true. This
+//     makes the children nodes to be traversed, and expanded with their respective children.
+//  3. If the traversal is preorder, (with the children to be traversed already pushed to the
+//     `delayedNodes`), returns the current node.
+//  4. Call `traversal.next()` to further traverse through the `delayedNodes`.
 //
 // B. If the `node` is a leaf node, it will be returned without expand, by the following process:
-// 1. If the traversal is postorder, the current node will be append to the `delayedNodes` with `delayed`
-//    set to false, and immediately returned at the subsequent call of `traversal.next()` at the last line.
-// 2. If the traversal is preorder, the current node will be returned.
+//  1. If the traversal is postorder, the current node will be append to the `delayedNodes` with `delayed`
+//     set to false, and immediately returned at the subsequent call of `traversal.next()` at the last line.
+//  2. If the traversal is preorder, the current node will be returned.
 func (t *traversal) next() (*Node, error) {
 	// End of traversal.
 	if t.delayedNodes.length() == 0 {
@@ -258,4 +258,78 @@ func (iter *Iterator) Error() error {
 // IsFast returnts true if iterator uses fast strategy
 func (iter *Iterator) IsFast() bool {
 	return false
+}
+
+// NodeIterator is an iterator for nodeDB to traverse a tree in depth-first, preorder manner.
+type NodeIterator struct {
+	nodesToVisit []*Node
+	ndb          *nodeDB
+	err          error
+}
+
+// NewNodeIterator returns a new NodeIterator to traverse the tree of the root node.
+func NewNodeIterator(rootKey []byte, ndb *nodeDB) (*NodeIterator, error) {
+	if rootKey == nil {
+		return &NodeIterator{
+			nodesToVisit: []*Node{},
+			ndb:          ndb,
+		}, nil
+	}
+
+	node, err := ndb.GetNode(rootKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &NodeIterator{
+		nodesToVisit: []*Node{node},
+		ndb:          ndb,
+	}, nil
+}
+
+// GetNode returns the current visiting node.
+func (iter *NodeIterator) GetNode() *Node {
+	return iter.nodesToVisit[len(iter.nodesToVisit)-1]
+}
+
+// Valid checks if the validator is valid.
+func (iter *NodeIterator) Valid() bool {
+	return iter.err == nil && len(iter.nodesToVisit) > 0
+}
+
+// Error returns an error if any errors.
+func (iter *NodeIterator) Error() error {
+	return iter.err
+}
+
+// Next moves forward the traversal.
+// if isSkipped is true, the subtree under the current node is skipped.
+func (iter *NodeIterator) Next(isSkipped bool) {
+	if !iter.Valid() {
+		return
+	}
+	node := iter.GetNode()
+	iter.nodesToVisit = iter.nodesToVisit[:len(iter.nodesToVisit)-1]
+
+	if isSkipped {
+		return
+	}
+
+	if node.isLeaf() {
+		return
+	}
+
+	rightNode, err := iter.ndb.GetNode(node.rightHash)
+	if err != nil {
+		iter.err = err
+		return
+	}
+	iter.nodesToVisit = append(iter.nodesToVisit, rightNode)
+
+	leftNode, err := iter.ndb.GetNode(node.leftHash)
+	if err != nil {
+		iter.err = err
+		return
+	}
+	iter.nodesToVisit = append(iter.nodesToVisit, leftNode)
 }
