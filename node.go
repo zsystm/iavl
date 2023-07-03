@@ -12,6 +12,7 @@ import (
 
 	"github.com/cosmos/iavl/cache"
 	"github.com/pkg/errors"
+	dbm "github.com/tendermint/tm-db"
 
 	"github.com/cosmos/iavl/internal/encoding"
 )
@@ -563,6 +564,47 @@ func (node *Node) GetLogicalKey() []byte {
 
 func (node *Node) IsLeaf() bool {
 	return node.isLeaf()
+}
+
+func (node *Node) Has(db dbm.DB, key []byte) (bool, error) {
+	if bytes.Equal(node.key, key) {
+		return true, nil
+	}
+	if node.isLeaf() {
+		return false, nil
+	}
+
+	if bytes.Compare(key, node.key) < 0 {
+		var leftNode *Node
+		if node.leftNode != nil {
+			leftNode = node.leftNode
+		} else {
+			buf, err := db.Get(nodeKeyFormat.Key(node.leftHash))
+			if err != nil {
+				return false, err
+			}
+			leftNode, err = MakeNode(buf)
+			if err != nil {
+				return false, err
+			}
+		}
+		return leftNode.Has(db, key)
+	}
+
+	var rightNode *Node
+	if node.leftNode != nil {
+		rightNode = node.leftNode
+	} else {
+		buf, err := db.Get(nodeKeyFormat.Key(node.rightHash))
+		if err != nil {
+			return false, err
+		}
+		rightNode, err = MakeNode(buf)
+		if err != nil {
+			return false, err
+		}
+	}
+	return rightNode.Has(db, key)
 }
 
 var (
