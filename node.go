@@ -607,6 +607,48 @@ func (node *Node) Has(db dbm.DB, key []byte) (bool, error) {
 	return rightNode.Has(db, key)
 }
 
+func LeafNodeHash(key, value []byte, version int64) ([]byte, error) {
+	h := sha256.New()
+	var buf bytes.Buffer
+	// height
+	err := encoding.EncodeVarint(&buf, 0)
+	if err != nil {
+		return nil, err
+	}
+	// size
+	err = encoding.EncodeVarint(&buf, 1)
+	if err != nil {
+		return nil, err
+	}
+	// version
+	err = encoding.EncodeVarint(&buf, version)
+	if err != nil {
+		return nil, err
+	}
+
+	//key
+	err = encoding.EncodeBytes(&buf, key)
+	if err != nil {
+		return nil, err
+	}
+
+	// value
+	valueHash := sha256.Sum256(value)
+	err = encoding.EncodeBytes(&buf, valueHash[:])
+	if err != nil {
+		return nil, err
+	}
+	_, err = h.Write(buf.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
+}
+
+func (node *Node) ComputeHash() ([]byte, error) {
+	return node._hash()
+}
+
 var (
 	ErrCloneLeafNode  = fmt.Errorf("attempt to copy a leaf node")
 	ErrEmptyChildHash = fmt.Errorf("found an empty child hash")
