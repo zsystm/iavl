@@ -500,3 +500,33 @@ func (node *Node) varSize() uint64 {
 func (node *Node) sizeBytes() uint64 {
 	return nodeSize + node.varSize()
 }
+
+func MinRightToken(a []byte, b []byte) []byte {
+	maxLength := len(a)
+	if len(b) > maxLength {
+		maxLength = len(b)
+	}
+	token := make([]byte, 0, maxLength)
+
+	for i := 0; i < maxLength; i++ {
+		if i == len(a) {
+			token = append(token, b[i])
+			return token
+		}
+		if i == len(b) {
+			token = append(token, a[i])
+			return token
+		}
+
+		if a[i] != b[i] {
+			if b[i] > a[i] {
+				token = append(token, b[i])
+				return token
+			}
+			token = append(token, a[i])
+			return token
+		}
+		token = append(token, a[i])
+	}
+	return token
+}

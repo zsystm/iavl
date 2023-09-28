@@ -510,6 +510,20 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	return updated, nil
 }
 
+func (tree *Tree) set_v2(key []byte, value []byte) (updated bool, err error) {
+	if value == nil {
+		return updated, fmt.Errorf("attempt to store nil value at key '%s'", key)
+	}
+
+	if tree.root == nil {
+		tree.root = tree.NewNode(key, value, tree.version)
+		return updated, nil
+	}
+
+	tree.root, updated, _, err = tree.recursiveSet_v2(tree.root, key, value, false)
+	return updated, err
+}
+
 func (tree *Tree) set(key []byte, value []byte) (updated bool, err error) {
 	if value == nil {
 		return updated, fmt.Errorf("attempt to store nil value at key '%s'", key)
@@ -520,11 +534,11 @@ func (tree *Tree) set(key []byte, value []byte) (updated bool, err error) {
 		return updated, nil
 	}
 
-	tree.root, updated, err = tree.recursiveSet(tree.root, key, value)
+	tree.root, updated, err = tree.recursiveSet_v1(tree.root, key, value)
 	return updated, err
 }
 
-func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
+func (tree *Tree) recursiveSet_v1(node *Node, key []byte, value []byte) (
 	newSelf *Node, updated bool, err error,
 ) {
 	if node == nil {
@@ -562,31 +576,12 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			return parent, false, nil
 		default:
 			tree.addOrphan(node)
-			//return tree.NewNode(key, value, tree.version), true, nil
 
 			tree.mutateNode(node)
 			node.value = value
 			node._hash(tree.version + 1)
 			node.value = nil
 			return node, true, nil
-
-			//n := tree.pool.Get()
-			//n.nodeKey = tree.nextNodeKey()
-			//
-			//n.key = key
-			//n.value = value
-			//n.subtreeHeight = 0
-			//n.size = 1
-			//n._hash(tree.version + 1)
-			//n.value = nil
-			//n.dirty = true
-			//
-			//if !node.dirty {
-			//	tree.workingBytes += n.sizeBytes()
-			//	tree.workingSize++
-			//}
-			//tree.pool.Put(node)
-			//return n, true, nil
 		}
 
 	} else {
@@ -595,13 +590,13 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 
 		var child *Node
 		if bytes.Compare(key, node.key) < 0 {
-			child, updated, err = tree.recursiveSet(node.left(tree), key, value)
+			child, updated, err = tree.recursiveSet_v1(node.left(tree), key, value)
 			if err != nil {
 				return nil, updated, err
 			}
 			node.setLeft(child)
 		} else {
-			child, updated, err = tree.recursiveSet(node.right(tree), key, value)
+			child, updated, err = tree.recursiveSet_v1(node.right(tree), key, value)
 			if err != nil {
 				return nil, updated, err
 			}
@@ -620,6 +615,100 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			return nil, false, err
 		}
 		return newNode, updated, err
+	}
+}
+
+func (tree *Tree) recursiveSet_v2(node *Node, key []byte, value []byte, choseRight bool) (
+	newSelf *Node, updated bool, mustLeft bool, err error,
+) {
+	if node == nil {
+		panic("node is nil")
+	}
+	if node.isLeaf() {
+		// store direction to leaf child
+		// if went right and choosing left child, we must reverse in order to maintain iavl v1 structure
+		// reverse means back to parent and choose left
+		switch bytes.Compare(key, node.key) {
+		case -1: // setKey < leafKey
+			if choseRight {
+				log.Debug().Msgf("recursiveSet choseRight=%v, mustLeft on %s", choseRight, key)
+				return node, false, true, nil
+			}
+			tree.metrics.PoolGet += 2
+			parent := tree.pool.Get()
+			parent.nodeKey = tree.nextNodeKey()
+			parent.key = MinRightToken(key, node.key)
+			//parent.key = node.key
+			parent.subtreeHeight = 1
+			parent.size = 2
+			parent.dirty = true
+			parent.setLeft(tree.NewNode(key, value, tree.version))
+			parent.setRight(node)
+
+			tree.workingBytes += parent.sizeBytes()
+			tree.workingSize++
+			return parent, false, false, nil
+		case 1: // setKey > leafKey
+			tree.metrics.PoolGet += 2
+			parent := tree.pool.Get()
+			parent.nodeKey = tree.nextNodeKey()
+			parent.key = MinRightToken(key, node.key)
+			//parent.key = key
+			parent.subtreeHeight = 1
+			parent.size = 2
+			parent.dirty = true
+			parent.setLeft(node)
+			parent.setRight(tree.NewNode(key, value, tree.version))
+
+			tree.workingBytes += parent.sizeBytes()
+			tree.workingSize++
+			return parent, false, false, nil
+		default:
+			tree.addOrphan(node)
+
+			tree.mutateNode(node)
+			node.value = value
+			node._hash(tree.version + 1)
+			node.value = nil
+			return node, true, false, nil
+		}
+
+	} else {
+		tree.addOrphan(node)
+		tree.mutateNode(node)
+
+		var child *Node
+		if bytes.Compare(key, node.key) < 0 {
+			child, updated, mustLeft, err = tree.recursiveSet_v2(node.left(tree), key, value, false)
+			if err != nil {
+				return nil, updated, false, err
+			}
+			node.setLeft(child)
+		} else {
+			child, updated, mustLeft, err = tree.recursiveSet_v2(node.right(tree), key, value, true)
+			if err != nil {
+				return nil, updated, false, err
+			}
+			if mustLeft {
+				child, updated, _, err = tree.recursiveSet_v2(node.left(tree), key, value, true)
+				node.setLeft(child)
+			} else {
+				node.setRight(child)
+			}
+		}
+
+		if updated {
+			return node, updated, false, nil
+		}
+		err = node.calcHeightAndSize(tree)
+		if err != nil {
+			return nil, false, false, err
+		}
+		newNode, err := tree.balance(node)
+		if err != nil {
+			return nil, false, false, err
+		}
+		return newNode, updated, false, err
 	}
 }
 
@@ -810,4 +899,22 @@ func (tree *Tree) returnNode(node *Node) {
 		tree.workingSize--
 	}
 	tree.pool.Put(node)
+}
+
+func (tree *Tree) reHash(node *Node) []byte {
+	if !node.isLeaf() {
+		tree.reHash(node.left(tree))
+		tree.reHash(node.right(tree))
+	}
+	//if node.size > 3 {
+	//	node.key = MinRightToken(node.leftNode.key, node.rightNode.key)
+	//}
+	node.hash = nil
+	node._hash(tree.version)
+
+	return node.hash
+}
+
+func (tree *Tree) Hash() []byte {
+	return tree.reHash(tree.root)
 }
