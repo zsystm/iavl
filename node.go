@@ -44,9 +44,17 @@ func (nk NodeKey) IsEmpty() bool {
 	return nk == emptyNodeKey
 }
 
+type nodeDiff struct {
+	new        *Node
+	prevHeight int8
+	prevKey    []byte
+	deleted    bool
+}
+
 // Node represents a node in a Tree.
 type Node struct {
 	key           []byte
+	sortKey       []byte
 	value         []byte
 	hash          []byte
 	nodeKey       NodeKey
@@ -261,6 +269,7 @@ func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 
 	node.setLeft(newNode.right(tree))
 	newNode.setRight(node)
+	newNode.sortKey = MinRightToken(node.leftNode.key, newNode.leftNode.sortKey)
 
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
@@ -499,4 +508,34 @@ func (node *Node) varSize() uint64 {
 
 func (node *Node) sizeBytes() uint64 {
 	return nodeSize + node.varSize()
+}
+
+func MinRightToken(a []byte, b []byte) []byte {
+	maxLength := len(a)
+	if len(b) > maxLength {
+		maxLength = len(b)
+	}
+	token := make([]byte, 0, maxLength)
+
+	for i := 0; i < maxLength; i++ {
+		if i == len(a) {
+			token = append(token, b[i])
+			return token
+		}
+		if i == len(b) {
+			token = append(token, a[i])
+			return token
+		}
+
+		if a[i] != b[i] {
+			if b[i] > a[i] {
+				token = append(token, b[i])
+				return token
+			}
+			token = append(token, a[i])
+			return token
+		}
+		token = append(token, a[i])
+	}
+	return token
 }

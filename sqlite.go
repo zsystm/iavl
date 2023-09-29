@@ -109,6 +109,7 @@ func (sql *SqliteDb) initNewDb() error {
 CREATE TABLE root (version int, node_version int, node_sequence, PRIMARY KEY (version));
 CREATE TABLE leaf (version int, sequence int, bytes blob);
 CREATE TABLE tree (version int, sequence int, bytes blob);
+CREATE TABLE latest (key blob, hash blob, height int, sort_key blob);
 CREATE TABLE shard (version int, id int, PRIMARY KEY (version, id));`)
 	if err != nil {
 		return err
