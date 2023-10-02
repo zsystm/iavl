@@ -270,7 +270,7 @@ func (node *Node) calcBalance(t *Tree) (int, error) {
 
 // Rotate right and return the new node and orphan.
 func (tree *Tree) rotateRight(node *Node) (*Node, error) {
-	log.Debug().Msgf("rotateRight: %s", node.key)
+	//log.Debug().Msgf("rotateRight: %s", node.key)
 
 	var err error
 	tree.addOrphan(node)
@@ -282,13 +282,6 @@ func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 
 	node.setLeft(newNode.right(tree))
 	newNode.setRight(node)
-
-	//maybeSortKey := MinRightToken(node.leftNode.key, newNode.leftNode.key)
-	//if bytes.Compare(maybeSortKey, newNode.sortKey) < 0 {
-	//	newNode.sortKey = maybeSortKey
-	//}
-
-	//newNode.sortKey = MinRightToken(node.leftNode.key, node.rightNode.key)
 
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
@@ -305,7 +298,7 @@ func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 
 // Rotate left and return the new node and orphan.
 func (tree *Tree) rotateLeft(node *Node) (*Node, error) {
-	log.Debug().Msgf("rotateLeft: %s", node.key)
+	//log.Debug().Msgf("rotateLeft: %s", node.key)
 
 	var err error
 	tree.addOrphan(node)
