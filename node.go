@@ -180,6 +180,9 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 	}
 
 	if balance > 1 {
+		tree.emitDotGraph(tree.root).Label(fmt.Sprintf("left too heavy, re-balancing %s-%d",
+			node.key, node.subtreeHeight))
+
 		lftBalance, err := node.leftNode.calcBalance(tree)
 		if err != nil {
 			return nil, err
@@ -191,6 +194,7 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			if err != nil {
 				return nil, err
 			}
+			tree.emitDotGraph(newNode).Label("left left case; subtree right rotated")
 			return newNode, nil
 		}
 		// Left Right Case
@@ -199,15 +203,20 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			return nil, err
 		}
 		node.setLeft(newLeftNode)
+		tree.emitDotGraph(node).Label("left right case; left subtree left rotated")
 
 		newNode, err := tree.rotateRight(node)
 		if err != nil {
 			return nil, err
 		}
+		tree.emitDotGraph(newNode).Label("left right case; subtree right rotated")
 
 		return newNode, nil
 	}
 	if balance < -1 {
+		tree.emitDotGraph(tree.root).Label(fmt.Sprintf("right too heavy, re-balancing %s-%d",
+			node.key, node.subtreeHeight))
+
 		rightNode, err := node.getRightNode(tree)
 		if err != nil {
 			return nil, err
@@ -223,20 +232,22 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			if err != nil {
 				return nil, err
 			}
+			tree.emitDotGraph(newNode).Label("right right case; subtree left rotated")
 			return newNode, nil
 		}
-		// Right Left Case
-		// TODO should be mutate? ref v1 and v0
+
 		newRightNode, err := tree.rotateRight(rightNode)
 		if err != nil {
 			return nil, err
 		}
 		node.setRight(newRightNode)
+		tree.emitDotGraph(node).Label("right left case; right subtree right rotated")
 
 		newNode, err := tree.rotateLeft(node)
 		if err != nil {
 			return nil, err
 		}
+		tree.emitDotGraph(newNode).Label("right left case; subtree left rotated")
 		return newNode, nil
 	}
 	// Nothing changed
@@ -259,6 +270,8 @@ func (node *Node) calcBalance(t *Tree) (int, error) {
 
 // Rotate right and return the new node and orphan.
 func (tree *Tree) rotateRight(node *Node) (*Node, error) {
+	log.Debug().Msgf("rotateRight: %s", node.key)
+
 	var err error
 	tree.addOrphan(node)
 	tree.mutateNode(node)
@@ -269,7 +282,13 @@ func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 
 	node.setLeft(newNode.right(tree))
 	newNode.setRight(node)
-	newNode.sortKey = MinRightToken(node.leftNode.key, newNode.leftNode.sortKey)
+
+	//maybeSortKey := MinRightToken(node.leftNode.key, newNode.leftNode.key)
+	//if bytes.Compare(maybeSortKey, newNode.sortKey) < 0 {
+	//	newNode.sortKey = maybeSortKey
+	//}
+
+	//newNode.sortKey = MinRightToken(node.leftNode.key, node.rightNode.key)
 
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
@@ -286,6 +305,8 @@ func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 
 // Rotate left and return the new node and orphan.
 func (tree *Tree) rotateLeft(node *Node) (*Node, error) {
+	log.Debug().Msgf("rotateLeft: %s", node.key)
+
 	var err error
 	tree.addOrphan(node)
 	tree.mutateNode(node)

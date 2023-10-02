@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
 	"sort"
 	"testing"
 
 	"github.com/cosmos/iavl-bench/bench"
-	"github.com/emicklei/dot"
 	api "github.com/kocubinski/costor-api"
 	"github.com/stretchr/testify/require"
 )
@@ -69,42 +67,13 @@ func TestMinRightToken_Gen(t *testing.T) {
 	}
 }
 
-func writeDotGraph(w io.Writer, root *Node) {
-	graph := dot.NewGraph(dot.Directed)
-
-	var traverse func(node *Node) dot.Node
-	var i int
-	traverse = func(node *Node) dot.Node {
-		if node == nil {
-			return dot.Node{}
-		}
-		i++
-		n := graph.Node(fmt.Sprintf("%s - %s - %d", string(node.key), string(node.sortKey), node.subtreeHeight))
-		if node.isLeaf() {
-			return n
-		}
-		leftNode := traverse(node.leftNode)
-		rightNode := traverse(node.rightNode)
-
-		n.Edge(leftNode, "l")
-		n.Edge(rightNode, "r")
-
-		return n
-	}
-
-	traverse(root)
-	fmt.Println("i", i)
-	_, err := w.Write([]byte(graph.String()))
-	if err != nil {
-		panic(err)
-	}
-}
-
 func TestTokenizedTree(t *testing.T) {
 	// can a total order of (sortKey, height) be built to satisfy a traversal order of the tree?
 	// in-order seems the most possible.
 
 	outDir := "/tmp/tree_viz"
+	require.NoError(t, os.RemoveAll(outDir))
+	require.NoError(t, os.Mkdir(outDir, 0755))
 
 	var inOrder func(node *Node) []*Node
 	inOrder = func(node *Node) (nodes []*Node) {
@@ -137,8 +106,8 @@ func TestTokenizedTree(t *testing.T) {
 		KeyStdDev:        1,
 		ValueMean:        10,
 		ValueStdDev:      1,
-		InitialSize:      10,
-		FinalSize:        50,
+		InitialSize:      100,
+		FinalSize:        150,
 		Versions:         5,
 		ChangePerVersion: 5,
 		DeleteFraction:   0.2,
@@ -146,6 +115,8 @@ func TestTokenizedTree(t *testing.T) {
 	itr, err := gen.Iterator()
 	require.NoError(t, err)
 	tree := NewTree(nil, NewNodePool())
+	tree.emitDotGraphs = true
+
 	i := 0
 	for ; itr.Valid(); err = itr.Next() {
 		if itr.Version() > 1 {
@@ -168,46 +139,46 @@ func TestTokenizedTree(t *testing.T) {
 				require.NoError(t, err)
 			}
 			i++
-			f, err := os.Create(fmt.Sprintf("%s/step_%d.dot", outDir, i))
-			require.NoError(t, err)
-			writeDotGraph(f, tree.root)
-		}
-	}
-
-	orderedNodes := preOrder(tree.root)
-	sort.Slice(orderedNodes, func(i, j int) bool {
-		res := bytes.Compare(orderedNodes[i].sortKey, orderedNodes[j].sortKey)
-		// order by (key ASC, height DESC)
-		if res != 0 {
-			return res < 0
-		} else {
-			// height DESC
-			return orderedNodes[i].subtreeHeight > orderedNodes[j].subtreeHeight
-		}
-	})
-
-	inOrderNodes := inOrder(tree.root)
-	var lastNode *Node
-	for i, node := range inOrderNodes {
-		fmt.Printf("node: %s, %s, %d\n", string(node.key), string(node.sortKey), node.subtreeHeight)
-		if lastNode != nil {
-			require.LessOrEqual(t, lastNode.key, node.key)
-			if bytes.Equal(lastNode.key, node.key) {
-				// in-order assertion
-				require.Greater(t, lastNode.subtreeHeight, node.subtreeHeight)
+			for j, dg := range tree.dotGraphs {
+				f, err := os.Create(fmt.Sprintf("%s/step_%02d_%d.dot", outDir, i, j))
+				require.NoError(t, err)
+				_, err = f.Write([]byte(dg.String()))
+				require.NoError(t, err)
+				require.NoError(t, f.Close())
 			}
-			require.Equal(t, node.key, orderedNodes[i].key)
-			require.Equalf(t, orderedNodes[i].subtreeHeight, node.subtreeHeight,
-				"heights don't match, node.key: %s", node.key)
-			require.Equal(t, node, orderedNodes[i])
-		}
-		lastNode = node
-	}
+			tree.dotGraphs = nil
 
-	require.NoError(t, os.RemoveAll(outDir))
-	require.NoError(t, os.Mkdir(outDir, 0755))
-	f, err := os.Create(fmt.Sprintf("%s/tree.dot", outDir))
-	require.NoError(t, err)
-	writeDotGraph(f, tree.root)
-	require.NoError(t, f.Close())
+			// verify the tree at every step
+
+			orderedNodes := preOrder(tree.root)
+			sort.Slice(orderedNodes, func(i, j int) bool {
+				res := bytes.Compare(orderedNodes[i].sortKey, orderedNodes[j].sortKey)
+				// order by (key ASC, height DESC)
+				if res != 0 {
+					return res < 0
+				} else {
+					// height DESC
+					return orderedNodes[i].subtreeHeight > orderedNodes[j].subtreeHeight
+				}
+			})
+
+			inOrderNodes := inOrder(tree.root)
+			var lastNode *Node
+			for i, n := range inOrderNodes {
+				//fmt.Printf("node: %s, %s, %d\n", string(n.key), string(n.sortKey), n.subtreeHeight)
+				if lastNode != nil {
+					require.LessOrEqual(t, lastNode.key, n.key)
+					if bytes.Equal(lastNode.key, n.key) {
+						// in-order assertion
+						require.Greater(t, lastNode.subtreeHeight, n.subtreeHeight)
+					}
+					require.Equal(t, n.key, orderedNodes[i].key)
+					require.Equalf(t, n.subtreeHeight, orderedNodes[i].subtreeHeight,
+						"heights don't match, node.key: %s", n.key)
+					require.Equal(t, n, orderedNodes[i])
+				}
+				lastNode = n
+			}
+		}
+	}
 }

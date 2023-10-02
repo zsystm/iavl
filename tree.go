@@ -9,6 +9,7 @@ import (
 
 	"github.com/cosmos/iavl/v2/metrics"
 	"github.com/dustin/go-humanize"
+	"github.com/emicklei/dot"
 	"github.com/rs/zerolog"
 	zlog "github.com/rs/zerolog/log"
 )
@@ -39,6 +40,12 @@ type Tree struct {
 	branches []*Node
 	leaves   []*Node
 	sequence uint32
+
+	// debug
+	// when emitDotGraphs is set to true, the tree will emit a dot graph after each Set, Remove and rotate operation
+	emitDotGraphs bool
+	lastDotGraph  *dot.Graph
+	dotGraphs     []*dot.Graph
 }
 
 func NewTree(sql *SqliteDb, pool *NodePool) *Tree {
@@ -48,6 +55,7 @@ func NewTree(sql *SqliteDb, pool *NodePool) *Tree {
 		cache:          NewNodeCache(),
 		metrics:        &metrics.TreeMetrics{},
 		maxWorkingSize: 2 * 1024 * 1024 * 1024,
+		lastDotGraph:   dot.NewGraph(dot.Directed),
 	}
 	return tree
 }
@@ -507,6 +515,9 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	} else {
 		tree.metrics.TreeNewNode++
 	}
+
+	tree.emitDotGraph(tree.root)
+
 	return updated, nil
 }
 
@@ -537,9 +548,6 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			parent := tree.pool.Get()
 			parent.nodeKey = tree.nextNodeKey()
 			parent.sortKey = MinRightToken(key, node.key)
-			if string(parent.sortKey) == "a" {
-				fmt.Println("a")
-			}
 			parent.key = node.key
 			parent.subtreeHeight = 1
 			parent.size = 2
@@ -555,9 +563,6 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			parent := tree.pool.Get()
 			parent.nodeKey = tree.nextNodeKey()
 			parent.sortKey = MinRightToken(key, node.key)
-			if string(parent.sortKey) == "a" {
-				fmt.Println("a")
-			}
 			parent.key = key
 			parent.subtreeHeight = 1
 			parent.size = 2
@@ -598,6 +603,15 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		if updated {
 			return node, updated, nil
 		}
+
+		//if bytes.Equal(node.leftNode.key, key) {
+		//	node.sortKey = MinRightToken(node.leftNode.key, node.rightNode.key)
+		//}
+
+		if bytes.HasPrefix(key, node.sortKey) {
+			node.sortKey = node.key[:len(node.sortKey)+1]
+		}
+
 		err = node.calcHeightAndSize(tree)
 		if err != nil {
 			return nil, false, err
@@ -627,6 +641,7 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 	tree.metrics.TreeDelete++
 
 	tree.root = newRoot
+	tree.emitDotGraph(tree.root)
 	return value, true, nil
 }
 
@@ -801,4 +816,13 @@ func (tree *Tree) returnNode(node *Node) {
 		prevHeight: node.subtreeHeight,
 	})
 	tree.pool.Put(node)
+}
+
+func (tree *Tree) emitDotGraph(root *Node) *dot.Graph {
+	if !tree.emitDotGraphs {
+		return nil
+	}
+	tree.lastDotGraph = writeDotGraph(root, tree.lastDotGraph)
+	tree.dotGraphs = append(tree.dotGraphs, tree.lastDotGraph)
+	return tree.lastDotGraph
 }
