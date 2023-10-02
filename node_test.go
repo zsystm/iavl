@@ -7,10 +7,10 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/cosmos/iavl-bench/bench"
-	api "github.com/kocubinski/costor-api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,8 +98,6 @@ func TestTokenizedTree(t *testing.T) {
 		return nodes
 	}
 
-	nodesByKey := make(map[string]*api.Node)
-
 	gen := bench.ChangesetGenerator{
 		Seed:             77,
 		KeyMean:          4,
@@ -119,9 +117,9 @@ func TestTokenizedTree(t *testing.T) {
 
 	i := 0
 	for ; itr.Valid(); err = itr.Next() {
-		if itr.Version() > 1 {
-			break
-		}
+		//if itr.Version() > 1 {
+		//	break
+		//}
 		require.NoError(t, err)
 		nodes := itr.Nodes()
 		for ; nodes.Valid(); err = nodes.Next() {
@@ -132,19 +130,21 @@ func TestTokenizedTree(t *testing.T) {
 			require.NoError(t, err)
 			node := nodes.GetNode()
 			strKey := hex.EncodeToString(node.Key)
-			nodesByKey[strKey] = node
 			bzKey := []byte(strKey)
 
+			i++
 			if node.Delete {
+				if strings.HasPrefix(strKey, "7c") {
+					log.Info().Msgf("deleting key=%s step=%d", strKey, i)
+				}
 				_, _, err := tree.Remove(bzKey)
 				require.NoError(t, err)
 			} else {
 				_, err := tree.Set(bzKey, node.Value)
 				require.NoError(t, err)
 			}
-			i++
 			for j, dg := range tree.dotGraphs {
-				f, err := os.Create(fmt.Sprintf("%s/step_%02d_%d.dot", outDir, i, j))
+				f, err := os.Create(fmt.Sprintf("%s/step_%04d_%d.dot", outDir, i, j))
 				require.NoError(t, err)
 				_, err = f.Write([]byte(dg.String()))
 				require.NoError(t, err)
