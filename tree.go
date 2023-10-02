@@ -608,8 +608,22 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		//	node.sortKey = MinRightToken(node.leftNode.key, node.rightNode.key)
 		//}
 
+		// case:
+		// at insert time node.sortKey = f, and node.key = fe777f
+		// and key = fe611...
+		// this behavior produces a new sortKey = fe
+		//
+		// want:
+		// sortKey = fe7
 		if bytes.HasPrefix(key, node.sortKey) {
-			node.sortKey = node.key[:len(node.sortKey)+1]
+			if bytes.Compare(key, node.key) < 0 {
+				node.sortKey = MinRightToken(node.key, key)
+			} else {
+				node.sortKey = MinLeftToken(node.key, key)
+			}
+			//node.sortKey = node.key[:len(node.sortKey)+1]
+			//node.sortKey = MinRightToken(node.key, key)
+			//node.sortKey = MinLeftToken(node.key, key)
 		}
 
 		err = node.calcHeightAndSize(tree)

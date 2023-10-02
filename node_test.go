@@ -125,6 +125,10 @@ func TestTokenizedTree(t *testing.T) {
 		require.NoError(t, err)
 		nodes := itr.Nodes()
 		for ; nodes.Valid(); err = nodes.Next() {
+			//if i > 7 {
+			//	break
+			//}
+
 			require.NoError(t, err)
 			node := nodes.GetNode()
 			strKey := hex.EncodeToString(node.Key)
@@ -172,7 +176,8 @@ func TestTokenizedTree(t *testing.T) {
 						// in-order assertion
 						require.Greater(t, lastNode.subtreeHeight, n.subtreeHeight)
 					}
-					require.Equal(t, n.key, orderedNodes[i].key)
+					require.Equalf(t, n.key, orderedNodes[i].key, "expected (%s, %d), got (%s, %d)",
+						string(n.key), n.subtreeHeight, string(orderedNodes[i].key), orderedNodes[i].subtreeHeight)
 					require.Equalf(t, n.subtreeHeight, orderedNodes[i].subtreeHeight,
 						"heights don't match, node.key: %s", n.key)
 					require.Equal(t, n, orderedNodes[i])
