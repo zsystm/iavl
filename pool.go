@@ -60,6 +60,11 @@ func (np *NodePool) Get() *Node {
 	}
 	n := np.syncPool.Get().(*Node)
 	n.poolId = np.poolId
+
+	if np.poolId == 917 {
+		log.Warn().Msgf("poolId=%d", np.poolId)
+	}
+
 	return n
 
 	//return &Node{}

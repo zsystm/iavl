@@ -60,6 +60,7 @@ func NewTree(sql *SqliteDb, pool *NodePool) *Tree {
 		maxWorkingSize: 2 * 1024 * 1024 * 1024,
 		lastDotGraph:   dot.NewGraph(dot.Directed),
 	}
+	tree.sql.metrics = tree.metrics
 	return tree
 }
 
@@ -202,18 +203,23 @@ func (tree *Tree) SaveVersionDiffs() ([]byte, int64, error) {
 	}
 	sqlSave.saveBranches = tree.version == 1
 
+	start := time.Now()
 	if err = sqlSave.deepSave(tree.root); err != nil {
 		return nil, 0, fmt.Errorf("failed to save tree: %w", err)
 	}
 	if err = sqlSave.finish(); err != nil {
 		return nil, 0, err
 	}
+	dur := time.Since(start)
+	tree.metrics.WriteDurations = append(tree.metrics.WriteDurations, dur)
+	tree.metrics.WriteTime += dur
 
 	if err = tree.sql.SaveRoot(tree.version, tree.root); err != nil {
 		return nil, 0, fmt.Errorf("failed to save root: %w", err)
 	}
+
 	tree.lastLeafSequence = tree.leafSequence
-	tree.sql.queryLeaf, tree.sql.queryBranch = nil, nil
+	//tree.sql.queryLeaf, tree.sql.queryBranch = nil, nil
 	return tree.root.hash, tree.version, nil
 }
 

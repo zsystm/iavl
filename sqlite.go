@@ -10,6 +10,7 @@ import (
 
 	"github.com/aybabtme/uniplot/histogram"
 	"github.com/bvinc/go-sqlite-lite/sqlite3"
+	"github.com/cosmos/iavl/v2/metrics"
 	"github.com/dustin/go-humanize"
 )
 
@@ -33,6 +34,8 @@ type SqliteDb struct {
 	queryLeafMiss    int64
 	queryLeafCount   int64
 	queryBranchCount int64
+
+	metrics *metrics.TreeMetrics
 }
 
 func NewSqliteDb(pool *NodePool, path string, newDb bool) (*SqliteDb, error) {
@@ -345,7 +348,7 @@ func (sql *SqliteDb) getLeaf(seq leafSeq) (*Node, error) {
 		return nil, err
 	}
 
-	log.Info().Msgf("leaf found: %d", seq)
+	//log.Info().Msgf("leaf found: %d", seq)
 
 	node := sql.pool.Get()
 	var version int64
@@ -354,6 +357,7 @@ func (sql *SqliteDb) getLeaf(seq leafSeq) (*Node, error) {
 		return nil, err
 	}
 	node.nodeKey = NewNodeKey(version, 0)
+	node.leafSeq = seq
 
 	err = sql.queryLeaf.Reset()
 	if err != nil {
@@ -404,6 +408,8 @@ func (sql *SqliteDb) getNode(nodeKey NodeKey, q *sqlite3.Stmt) (*Node, error) {
 }
 
 func (sql *SqliteDb) getBranch(bk *branchKey) (*Node, error) {
+	start := time.Now()
+
 	if bk == nil {
 		panic("branchKey is nil")
 	}
@@ -472,6 +478,12 @@ func (sql *SqliteDb) getBranch(bk *branchKey) (*Node, error) {
 	if err = sql.queryBranch.Reset(); err != nil {
 		return nil, err
 	}
+
+	dur := time.Since(start)
+	sql.queryDurations = append(sql.queryDurations, dur)
+	sql.queryTime += dur
+	sql.queryCount++
+	sql.queryBranchCount++
 
 	return node, nil
 }
@@ -633,6 +645,7 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 }
 
 func (sql *SqliteDb) addShardQuery() error {
+	panic("not supported")
 	if _, ok := sql.shards[sql.shardId]; ok {
 		return nil
 	}
@@ -1078,8 +1091,7 @@ func (sql *SqliteDb) getLeftNode(node *Node) (*Node, error) {
 }
 
 type sqlSaveVersion struct {
-	conn         *sqlite3.Conn
-	pool         *NodePool
+	sql          *SqliteDb
 	tree         *Tree
 	saveBranches bool
 	batchSize    int
@@ -1094,13 +1106,8 @@ type sqlSaveVersion struct {
 }
 
 func newSqlSaveVersion(sql *SqliteDb, tree *Tree) (*sqlSaveVersion, error) {
-	conn, err := sqlite3.Open(sql.connString)
-	if err != nil {
-		return nil, err
-	}
 	sv := &sqlSaveVersion{
-		conn:       conn,
-		pool:       sql.pool,
+		sql:        sql,
 		tree:       tree,
 		batchSize:  200_000,
 		lastCommit: time.Now(),
@@ -1112,6 +1119,9 @@ func newSqlSaveVersion(sql *SqliteDb, tree *Tree) (*sqlSaveVersion, error) {
 }
 
 func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
+	if node.sortKey == nil && node.leafSeq == 0 {
+		panic("found a node with nil sortKey and leafSeq")
+	}
 	// abort traversal on branch node with a hash - it is already persisted and therefore so is the subtree
 	if node.hash != nil && !node.isLeaf() {
 		return nil
@@ -1133,20 +1143,14 @@ func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
 		if err = sv.leafInsert.Exec(int(node.leafSeq), node.nodeKey.Version(), node.key, node.hash); err != nil {
 			return fmt.Errorf("leaf seq id %d failed: %w", node.leafSeq, err)
 		}
-		sv.pool.Put(node)
+		sv.sql.pool.Put(node)
+		sv.sql.metrics.WriteLeaves++
 	case node.isLeaf():
 		if err = sv.leafUpdate.Exec(node.key, node.nodeKey.Version(), node.hash, int(node.leafSeq)); err != nil {
 			return err
 		}
-		sv.pool.Put(node)
+		sv.sql.pool.Put(node)
 	case sv.saveBranches && (node.lastBranchKey == nil || !node.lastBranchKey.Equals(node)):
-		if fmt.Sprintf("%x", node.sortKey) == "a9bf8d1e" {
-			fmt.Println("node.sortKey", node.leftLeaf, node.rightLeaf)
-		}
-		//if fmt.Sprintf("%X", node.leftNode.sortKey) == "0003A5F3CE55933EFF0FBD39CE070425585884DFD1D2240F52F25D272781DCD11CAF3B252A5291C5EA6FEF4D2EA4266028CC3F4B8E64093F18D7" {
-		//	fmt.Println("node.leftNode.sortKey", node.leftNode.leftLeaf, node.leftNode.rightLeaf)
-		//}
-
 		var leftSortKey, rightSortKey []byte
 		if node.leftLeaf == 0 {
 			leftSortKey = node.leftNode.sortKey
@@ -1204,32 +1208,32 @@ func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
 }
 
 func (sv *sqlSaveVersion) prepare() (err error) {
-	if err = sv.conn.Begin(); err != nil {
+	if err = sv.sql.write.Begin(); err != nil {
 		return err
 	}
 
-	sv.branchInsert, err = sv.conn.Prepare("INSERT INTO branch (sort_key, s_height, version, size, key, hash, left_sort_key, right_sort_key, left_leaf_seq, right_leaf_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	sv.branchInsert, err = sv.sql.write.Prepare("INSERT INTO branch (sort_key, s_height, version, size, key, hash, left_sort_key, right_sort_key, left_leaf_seq, right_leaf_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
-	sv.branchUpdate, err = sv.conn.Prepare("UPDATE branch SET sort_key = ?, s_height = ?, version = ?, key = ?, hash = ?, left_sort_key = ?, right_sort_key = ?, left_s_height = ?, right_s_height = ?, left_leaf_seq = ?, right_leaf_seq = ? WHERE sort_key = ? AND s_height = ?")
+	sv.branchUpdate, err = sv.sql.write.Prepare("UPDATE branch SET sort_key = ?, s_height = ?, version = ?, key = ?, hash = ?, left_sort_key = ?, right_sort_key = ?, left_s_height = ?, right_s_height = ?, left_leaf_seq = ?, right_leaf_seq = ? WHERE sort_key = ? AND s_height = ?")
 	if err != nil {
 		return err
 	}
-	sv.branchDelete, err = sv.conn.Prepare("DELETE FROM branch WHERE sort_key = ? AND s_height = ?")
+	sv.branchDelete, err = sv.sql.write.Prepare("DELETE FROM branch WHERE sort_key = ? AND s_height = ?")
 	if err != nil {
 		return err
 	}
 
-	sv.leafInsert, err = sv.conn.Prepare("INSERT INTO leaf (seq, version, key, hash) VALUES (?, ?, ?, ?)")
+	sv.leafInsert, err = sv.sql.write.Prepare("INSERT INTO leaf (seq, version, key, hash) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
-	sv.leafUpdate, err = sv.conn.Prepare("UPDATE leaf SET version = ?, key = ?, hash = ? WHERE seq = ?")
+	sv.leafUpdate, err = sv.sql.write.Prepare("UPDATE leaf SET version = ?, key = ?, hash = ? WHERE seq = ?")
 	if err != nil {
 		return err
 	}
-	sv.leafDelete, err = sv.conn.Prepare("DELETE FROM leaf WHERE seq = ?")
+	sv.leafDelete, err = sv.sql.write.Prepare("DELETE FROM leaf WHERE seq = ?")
 	if err != nil {
 		return err
 	}
@@ -1237,7 +1241,7 @@ func (sv *sqlSaveVersion) prepare() (err error) {
 }
 
 func (sv *sqlSaveVersion) commit() error {
-	if err := sv.conn.Commit(); err != nil {
+	if err := sv.sql.write.Commit(); err != nil {
 		return err
 	}
 	if err := sv.branchInsert.Close(); err != nil {
@@ -1265,10 +1269,10 @@ func (sv *sqlSaveVersion) finish() error {
 	if err := sv.commit(); err != nil {
 		return err
 	}
-	if err := sv.conn.Exec("PRAGMA wal_checkpoint(RESTART);"); err != nil {
+	if err := sv.sql.write.Exec("PRAGMA wal_checkpoint(RESTART);"); err != nil {
 		return err
 	}
-	return sv.conn.Close()
+	return nil
 }
 
 func (sql *SqliteDb) getLastLeafSeq() (leafSeq, error) {
@@ -1286,6 +1290,9 @@ func (sql *SqliteDb) getLastLeafSeq() (leafSeq, error) {
 	var seq int
 	err = q.Scan(&seq)
 	if err != nil {
+		return 0, err
+	}
+	if err = q.Close(); err != nil {
 		return 0, err
 	}
 	return leafSeq(seq), nil
