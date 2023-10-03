@@ -4,7 +4,6 @@ package iavl
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -173,109 +172,35 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 }
 
 func TestTree_Build(t *testing.T) {
-	//just a little bigger than the size of the initial changeset. evictions will occur slowly.
-	//poolSize := 210_050
-	// no evictions
-	//poolSize := 10_000
-	// overflow on initial changeset and frequently after; worst performance
-	//poolSize := 100_000
-
-	//poolSize = 1
-
 	var err error
-	//db := newMapDB()
-
 	tmpDir := t.TempDir()
 	//tmpDir := "/tmp/leaves"
 	t.Logf("levelDb tmpDir: %s\n", tmpDir)
-	//levelDb, err := leveldb.New("iavl_test", tmpDir)
-	//require.NoError(t, err)
 
 	pool := NewNodePool()
 	sql, err := NewSqliteDb(pool, tmpDir, true)
+	tree := NewTree(sql, pool)
 	require.NoError(t, err)
 
-	tree := &Tree{
-		metrics: &metrics.TreeMetrics{},
-		//db:             &kvDB{db: levelDb, pool: pool},
-		sql:            sql,
-		cache:          NewNodeCache(),
-		maxWorkingSize: 5 * 1024 * 1024 * 1024,
-		pool:           pool,
-	}
-	//tree.checkpointer = newCheckpointer(tree.db, tree.cache, pool)
-	//tree.checkpointer.sqliteDb = sql
-
-	//tree.pool.metrics = tree.metrics
-	//tree.pool.maxWorkingSize = 5 * 1024 * 1024 * 1024
-
-	//opts := testutil.BankLockup25_000()
 	opts := testutil.NewTreeBuildOptions()
-	//opts := testutil.BigStartOptions()
-	//opts := testutil.OsmoLike()
-	//opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/osmo-like/v2")
 	opts.Report = func() {
 		tree.metrics.Report()
 	}
 
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
-
-	//wg := &sync.WaitGroup{}
-	//wg.Add(1)
-	//go func() {
-	//	metricsErr := metrics.Default.Run(ctx)
-	//	require.NoError(t, metricsErr)
-	//	log.Info().Msg("metrics dump:")
-	//	fmt.Print(metrics.Default.Print())
-	//	wg.Done()
-	//}()
-	//
-	//wg.Add(1)
-	//go func() {
-	//	checkpointErr := tree.checkpointer.sqliteRun(ctx)
-	//	require.NoError(t, checkpointErr)
-	//	wg.Done()
-	//}()
+	require.NoError(t, tree.sql.resetReadConn())
 
 	testStart := time.Now()
 	leaves := testTreeBuild(t, tree, opts)
 
-	//err = tree.sqlCheckpoint()
-	//require.NoError(t, err)
-	// wait
-	//tree.pool.checkpointCh <- &checkpointArgs{version: -1}
 	treeDuration := time.Since(testStart)
-
-	// don't evict root on iteration, it interacts with the node pool
-	//tree.root.dirty = true
-
-	//count := treeCount(tree, *tree.root)
-	//height := treeHeight(tree, *tree.root)
-
 	workingSetCount := 0 // offset the dirty root above.
-	//for _, n := range tree.pool.nodes {
-	//	if n.dirty {
-	//		workingSetCount++
-	//	}
-	//}
 
 	fmt.Printf("mean leaves/s: %s\n", humanize.Comma(int64(float64(leaves)/treeDuration.Seconds())))
 	fmt.Printf("workingSetCount: %d\n", workingSetCount)
 
-	//fmt.Printf("treeCount: %d\n", count)
-	//fmt.Printf("treeHeight: %d\n", height)
-
-	//require.Equal(t, height, tree.root.subtreeHeight+1)
-
 	ts := &treeStat{}
 
-	//treeAndDbEqual(t, tree, *tree.root, ts)
-
 	fmt.Printf("tree size: %s\n", humanize.Bytes(ts.size))
-
-	cancel()
-	//wg.Wait()
 
 	require.Equal(t, opts.UntilHash, fmt.Sprintf("%x", tree.root.hash))
 }

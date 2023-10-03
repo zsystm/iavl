@@ -1070,6 +1070,9 @@ func (sql *SqliteDb) getRightNode(node *Node) (*Node, error) {
 }
 
 func (sql *SqliteDb) getLeftNode(node *Node) (*Node, error) {
+	if sql == nil {
+		panic("what")
+	}
 	var err error
 	if node.leftLeaf != 0 {
 		node.leftNode, err = sql.getLeaf(node.leftLeaf)

@@ -210,6 +210,17 @@ func (tree *Tree) SaveVersionDiffs() ([]byte, int64, error) {
 	if err = sqlSave.finish(); err != nil {
 		return nil, 0, err
 	}
+
+	if tree.version == 1 {
+		// TODO this is a hack for tests
+		if err = tree.sql.write.Exec("CREATE INDEX leaf_idx on leaf (seq);"); err != nil {
+			return nil, 0, err
+		}
+		if err = tree.sql.write.Exec("CREATE INDEX branch_idx on branch (sort_key);"); err != nil {
+			return nil, 0, err
+		}
+	}
+
 	dur := time.Since(start)
 	tree.metrics.WriteDurations = append(tree.metrics.WriteDurations, dur)
 	tree.metrics.WriteTime += dur
