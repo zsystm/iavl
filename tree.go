@@ -736,6 +736,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 
 	node.setRight(newRightNode)
 	if newKey != nil {
+		node.sortKey = MinRightToken(node.key, newKey)
 		node.key = newKey
 		node.sortKey = MinRightToken(node.key, node.left(tree).key)
 	}

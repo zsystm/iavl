@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"os"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/cosmos/iavl-bench/bench"
@@ -105,17 +104,17 @@ func TestTokenizedTree(t *testing.T) {
 		ValueMean:        10,
 		ValueStdDev:      1,
 		InitialSize:      100,
-		FinalSize:        150,
-		Versions:         5,
-		ChangePerVersion: 5,
+		FinalSize:        1000,
+		Versions:         20,
+		ChangePerVersion: 10,
 		DeleteFraction:   0.2,
 	}
 	itr, err := gen.Iterator()
 	require.NoError(t, err)
 	tree := NewTree(nil, NewNodePool())
-	tree.emitDotGraphs = true
+	//tree.emitDotGraphs = true
 
-	i := 0
+	step := 0
 	for ; itr.Valid(); err = itr.Next() {
 		//if itr.Version() > 1 {
 		//	break
@@ -132,11 +131,8 @@ func TestTokenizedTree(t *testing.T) {
 			strKey := hex.EncodeToString(node.Key)
 			bzKey := []byte(strKey)
 
-			i++
+			step++
 			if node.Delete {
-				if strings.HasPrefix(strKey, "7c") {
-					log.Info().Msgf("deleting key=%s step=%d", strKey, i)
-				}
 				_, _, err := tree.Remove(bzKey)
 				require.NoError(t, err)
 			} else {
@@ -144,7 +140,7 @@ func TestTokenizedTree(t *testing.T) {
 				require.NoError(t, err)
 			}
 			for j, dg := range tree.dotGraphs {
-				f, err := os.Create(fmt.Sprintf("%s/step_%04d_%d.dot", outDir, i, j))
+				f, err := os.Create(fmt.Sprintf("%s/step_%04d_%d.dot", outDir, step, j))
 				require.NoError(t, err)
 				_, err = f.Write([]byte(dg.String()))
 				require.NoError(t, err)
@@ -179,7 +175,7 @@ func TestTokenizedTree(t *testing.T) {
 					require.Equalf(t, n.key, orderedNodes[i].key, "expected (%s, %d), got (%s, %d)",
 						string(n.key), n.subtreeHeight, string(orderedNodes[i].key), orderedNodes[i].subtreeHeight)
 					require.Equalf(t, n.subtreeHeight, orderedNodes[i].subtreeHeight,
-						"heights don't match, node.key: %s", n.key)
+						"heights don't match, node.key: %s step=%d", n.key, step)
 					require.Equal(t, n, orderedNodes[i])
 				}
 				lastNode = n

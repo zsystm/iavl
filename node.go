@@ -563,11 +563,9 @@ func MinLeftToken(a []byte, b []byte) []byte {
 
 	for i := 0; i < maxLength; i++ {
 		if i == len(a) {
-			token = append(token, b[i])
 			return token
 		}
 		if i == len(b) {
-			token = append(token, a[i])
 			return token
 		}
 
