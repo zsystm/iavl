@@ -44,11 +44,22 @@ func (nk NodeKey) IsEmpty() bool {
 	return nk == emptyNodeKey
 }
 
+type branchKey struct {
+	sortKey []byte
+	sHeight int8
+}
+
+func (bk *branchKey) Equals(other *Node) bool {
+	return bytes.Equal(bk.sortKey, other.sortKey)
+}
+
+type leafSeq uint64
+
 type nodeDiff struct {
-	new        *Node
-	prevHeight int8
-	prevKey    []byte
-	deleted    bool
+	new         *Node
+	prevHeight  int8
+	prevSortKey []byte
+	delete      bool
 }
 
 // Node represents a node in a Tree.
@@ -67,6 +78,20 @@ type Node struct {
 
 	dirty  bool
 	poolId uint64
+
+	leftLeaf  leafSeq
+	rightLeaf leafSeq
+	leafSeq   leafSeq
+
+	leftBranch  *branchKey
+	rightBranch *branchKey
+
+	// if not nil then the node was mutated in place
+	// the sortKey and sHeight may have changed, but not necessarily
+	// invariant: when not nil hash must also be nil
+	// when operating in fast mode these changes are thrown away.
+	// when operating in full persist at every SaveVersion, they are written to disk.
+	lastBranchKey *branchKey
 }
 
 func (node *Node) isLeaf() bool {
@@ -75,12 +100,30 @@ func (node *Node) isLeaf() bool {
 
 func (node *Node) setLeft(leftNode *Node) {
 	node.leftNode = leftNode
-	node.leftNodeKey = leftNode.nodeKey
+	if leftNode.isLeaf() {
+		node.leftLeaf = leftNode.leafSeq
+		node.leftBranch = nil
+	} else {
+		node.leftBranch = &branchKey{
+			sortKey: leftNode.sortKey,
+			sHeight: leftNode.subtreeHeight,
+		}
+		node.leftLeaf = 0
+	}
 }
 
 func (node *Node) setRight(rightNode *Node) {
 	node.rightNode = rightNode
-	node.rightNodeKey = rightNode.nodeKey
+	if rightNode.isLeaf() {
+		node.rightLeaf = rightNode.leafSeq
+		node.rightBranch = nil
+	} else {
+		node.rightBranch = &branchKey{
+			sortKey: rightNode.sortKey,
+			sHeight: rightNode.subtreeHeight,
+		}
+		node.rightLeaf = 0
+	}
 }
 
 func (node *Node) left(t *Tree) *Node {
@@ -180,7 +223,7 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 	}
 
 	if balance > 1 {
-		tree.emitDotGraph(tree.root).Label(fmt.Sprintf("left too heavy, re-balancing %s-%d",
+		tree.emitDotGraphWithLabel(tree.root, fmt.Sprintf("left too heavy, re-balancing %s-%d",
 			node.key, node.subtreeHeight))
 
 		lftBalance, err := node.leftNode.calcBalance(tree)
@@ -194,7 +237,7 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			if err != nil {
 				return nil, err
 			}
-			tree.emitDotGraph(newNode).Label("left left case; subtree right rotated")
+			tree.emitDotGraphWithLabel(newNode, "left left case; subtree right rotated")
 			return newNode, nil
 		}
 		// Left Right Case
@@ -203,18 +246,18 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			return nil, err
 		}
 		node.setLeft(newLeftNode)
-		tree.emitDotGraph(node).Label("left right case; left subtree left rotated")
+		tree.emitDotGraphWithLabel(node, "left right case; left subtree left rotated")
 
 		newNode, err := tree.rotateRight(node)
 		if err != nil {
 			return nil, err
 		}
-		tree.emitDotGraph(newNode).Label("left right case; subtree right rotated")
+		tree.emitDotGraphWithLabel(newNode, "left right case; subtree right rotated")
 
 		return newNode, nil
 	}
 	if balance < -1 {
-		tree.emitDotGraph(tree.root).Label(fmt.Sprintf("right too heavy, re-balancing %s-%d",
+		tree.emitDotGraphWithLabel(tree.root, fmt.Sprintf("right too heavy, re-balancing %s-%d",
 			node.key, node.subtreeHeight))
 
 		rightNode, err := node.getRightNode(tree)
@@ -232,7 +275,7 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			if err != nil {
 				return nil, err
 			}
-			tree.emitDotGraph(newNode).Label("right right case; subtree left rotated")
+			tree.emitDotGraphWithLabel(newNode, "right right case; subtree left rotated")
 			return newNode, nil
 		}
 
@@ -241,13 +284,13 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			return nil, err
 		}
 		node.setRight(newRightNode)
-		tree.emitDotGraph(node).Label("right left case; right subtree right rotated")
+		tree.emitDotGraphWithLabel(node, "right left case; right subtree right rotated")
 
 		newNode, err := tree.rotateLeft(node)
 		if err != nil {
 			return nil, err
 		}
-		tree.emitDotGraph(newNode).Label("right left case; subtree left rotated")
+		tree.emitDotGraphWithLabel(newNode, "right left case; subtree left rotated")
 		return newNode, nil
 	}
 	// Nothing changed
@@ -570,7 +613,6 @@ func MinLeftToken(a []byte, b []byte) []byte {
 		}
 
 		if a[i] != b[i] {
-			// the comparison below is the only difference from MinRightToken
 			if b[i] < a[i] {
 				token = append(token, b[i])
 				return token

@@ -94,4 +94,11 @@ func (np *NodePool) resetNode(node *Node) {
 	node.subtreeHeight = 0
 	node.size = 0
 	node.dirty = false
+
+	node.leftLeaf = 0
+	node.rightLeaf = 0
+	node.leafSeq = 0
+	node.leftBranch = nil
+	node.rightBranch = nil
+	node.lastBranchKey = nil
 }

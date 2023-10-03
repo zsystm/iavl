@@ -46,6 +46,9 @@ type Tree struct {
 	emitDotGraphs bool
 	lastDotGraph  *dot.Graph
 	dotGraphs     []*dot.Graph
+
+	leafSequence     leafSeq
+	lastLeafSequence leafSeq
 }
 
 func NewTree(sql *SqliteDb, pool *NodePool) *Tree {
@@ -83,6 +86,11 @@ func (tree *Tree) LoadVersion(version int64) error {
 	}
 	// TODO
 	tree.lastCheckpoint = version
+	tree.leafSequence, err = tree.sql.getLastLeafSeq()
+	tree.lastLeafSequence = tree.leafSequence
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -183,6 +191,29 @@ func (tree *Tree) SaveVersionKV() ([]byte, int64, error) {
 	tree.branches = nil
 	tree.orphans = nil
 
+	return tree.root.hash, tree.version, nil
+}
+
+func (tree *Tree) SaveVersionDiffs() ([]byte, int64, error) {
+	tree.version++
+	sqlSave, err := newSqlSaveVersion(tree.sql, tree)
+	if err != nil {
+		return nil, 0, err
+	}
+	sqlSave.saveBranches = tree.version == 1
+
+	if err = sqlSave.deepSave(tree.root); err != nil {
+		return nil, 0, fmt.Errorf("failed to save tree: %w", err)
+	}
+	if err = sqlSave.finish(); err != nil {
+		return nil, 0, err
+	}
+
+	if err = tree.sql.SaveRoot(tree.version, tree.root); err != nil {
+		return nil, 0, fmt.Errorf("failed to save root: %w", err)
+	}
+	tree.lastLeafSequence = tree.leafSequence
+	tree.sql.queryLeaf, tree.sql.queryBranch = nil, nil
 	return tree.root.hash, tree.version, nil
 }
 
@@ -604,26 +635,15 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			return node, updated, nil
 		}
 
-		//if bytes.Equal(node.leftNode.key, key) {
-		//	node.sortKey = MinRightToken(node.leftNode.key, node.rightNode.key)
-		//}
-
-		// case:
-		// at insert time node.sortKey = f, and node.key = fe777f
-		// and key = fe611...
-		// this behavior produces a new sortKey = fe
-		//
-		// want:
-		// sortKey = fe7
+		if string(key) == "b224d146eb" {
+			fmt.Println("here")
+		}
 		if bytes.HasPrefix(key, node.sortKey) {
 			if bytes.Compare(key, node.key) < 0 {
 				node.sortKey = MinRightToken(node.key, key)
 			} else {
 				node.sortKey = MinLeftToken(node.key, key)
 			}
-			//node.sortKey = node.key[:len(node.sortKey)+1]
-			//node.sortKey = MinRightToken(node.key, key)
-			//node.sortKey = MinLeftToken(node.key, key)
 		}
 
 		err = node.calcHeightAndSize(tree)
@@ -738,7 +758,6 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 	if newKey != nil {
 		node.sortKey = MinRightToken(node.key, newKey)
 		node.key = newKey
-		node.sortKey = MinRightToken(node.key, node.left(tree).key)
 	}
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
@@ -789,9 +808,9 @@ func (tree *Tree) addOrphan(node *Node) {
 		return
 	}
 	tree.orphans = append(tree.orphans, &nodeDiff{
-		new:        node,
-		prevHeight: node.subtreeHeight,
-		prevKey:    node.key,
+		new:         node,
+		prevHeight:  node.subtreeHeight,
+		prevSortKey: node.key,
 	})
 }
 
@@ -806,6 +825,8 @@ func (tree *Tree) NewNode(key []byte, value []byte, version int64) *Node {
 	node := tree.pool.Get()
 
 	node.nodeKey = tree.nextNodeKey()
+	tree.leafSequence++
+	node.leafSeq = tree.leafSequence
 
 	node.key = key
 	node.sortKey = key
@@ -827,9 +848,9 @@ func (tree *Tree) returnNode(node *Node) {
 		tree.workingSize--
 	}
 	tree.orphans = append(tree.orphans, &nodeDiff{
-		deleted:    true,
-		prevKey:    node.key,
-		prevHeight: node.subtreeHeight,
+		delete:      true,
+		prevSortKey: node.sortKey,
+		prevHeight:  node.subtreeHeight,
 	})
 	tree.pool.Put(node)
 }
@@ -841,4 +862,12 @@ func (tree *Tree) emitDotGraph(root *Node) *dot.Graph {
 	tree.lastDotGraph = writeDotGraph(root, tree.lastDotGraph)
 	tree.dotGraphs = append(tree.dotGraphs, tree.lastDotGraph)
 	return tree.lastDotGraph
+}
+
+func (tree *Tree) emitDotGraphWithLabel(root *Node, label string) {
+	g := tree.emitDotGraph(root)
+	if g == nil {
+		return
+	}
+	g.Label(label)
 }

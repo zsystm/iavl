@@ -152,7 +152,7 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 			//}
 		}
 		if tree.kv == nil {
-			hash, version, err = tree.SaveVersion()
+			hash, version, err = tree.SaveVersionDiffs()
 		} else {
 			hash, version, err = tree.SaveVersionKV()
 		}
@@ -410,7 +410,7 @@ func TestOsmoLike_HotStart(t *testing.T) {
 }
 
 func TestOsmoLike_ColdStart(t *testing.T) {
-	tmpDir := "/tmp/iavl-init"
+	tmpDir := "/tmp/sortkey"
 
 	pool := NewNodePool()
 	sql, err := NewSqliteDb(pool, tmpDir, false)
@@ -418,7 +418,7 @@ func TestOsmoLike_ColdStart(t *testing.T) {
 	tree := NewTree(sql, pool)
 	require.NoError(t, tree.LoadVersion(1))
 
-	opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/osmo-like/v2")
+	opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/height-zero/v2")
 
 	require.NoError(t, err)
 
