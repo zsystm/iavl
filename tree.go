@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/cosmos/iavl/v2/metrics"
@@ -23,13 +22,10 @@ type Tree struct {
 	version        int64
 	root           *Node
 	metrics        *metrics.TreeMetrics
-	kv             *KvDB
 	sql            *SqliteDb
 	lastCheckpoint int64
 	orphans        []*nodeDiff
-	cache          *NodeCache
 	pool           *NodePool
-	checkpointer   *checkpointer
 
 	workingBytes uint64
 	workingSize  int64
@@ -55,17 +51,12 @@ func NewTree(sql *SqliteDb, pool *NodePool) *Tree {
 	tree := &Tree{
 		sql:            sql,
 		pool:           pool,
-		cache:          NewNodeCache(),
 		metrics:        &metrics.TreeMetrics{},
 		maxWorkingSize: 2 * 1024 * 1024 * 1024,
 		lastDotGraph:   dot.NewGraph(dot.Directed),
 	}
 	tree.sql.metrics = tree.metrics
 	return tree
-}
-
-func (tree *Tree) SetKV(kv *KvDB) {
-	tree.kv = kv
 }
 
 func (tree *Tree) LoadVersion(version int64) error {
@@ -78,7 +69,6 @@ func (tree *Tree) LoadVersion(version int64) error {
 	tree.orphans = nil
 	tree.workingBytes = 0
 	tree.workingSize = 0
-	tree.cache.Swap()
 
 	var err error
 	tree.root, err = tree.sql.LoadRoot(version)
@@ -93,12 +83,6 @@ func (tree *Tree) LoadVersion(version int64) error {
 		return err
 	}
 	return nil
-}
-
-func (tree *Tree) LoadVersionKV(version int64) (err error) {
-	tree.root, err = tree.kv.getRoot(version)
-	tree.version = version
-	return err
 }
 
 func (tree *Tree) WarmTree() error {
@@ -139,63 +123,7 @@ func (tree *Tree) loadTree(i *int, since *time.Time, node *Node) *Node {
 	return node
 }
 
-func (tree *Tree) SaveVersionKV() ([]byte, int64, error) {
-	tree.version++
-	tree.sequence = 0
-
-	var sequence uint32
-	tree.deepHash(&sequence, tree.root)
-
-	since := time.Now()
-	if tree.version == 1 {
-		sort.Slice(tree.branches, func(i, j int) bool {
-			return bytes.Compare(tree.branches[i].nodeKey[:], tree.branches[j].nodeKey[:]) < 0
-		})
-		for i, node := range tree.branches {
-			err := tree.kv.setBranch(node)
-			if err != nil {
-				return nil, tree.version, err
-			}
-			if i != 0 && i%100_000 == 0 {
-				log.Debug().Msgf("setBranch i=%s, wr/s=%s",
-					humanize.Comma(int64(i)),
-					humanize.Comma(int64(100_000/time.Since(since).Seconds())),
-				)
-				since = time.Now()
-			}
-		}
-	}
-
-	sort.Slice(tree.leaves, func(i, j int) bool {
-		return bytes.Compare(tree.leaves[i].nodeKey[:], tree.leaves[j].nodeKey[:]) < 0
-	})
-	for i, node := range tree.leaves {
-		err := tree.kv.setLeaf(node)
-		if err != nil {
-			return nil, tree.version, err
-		}
-		if i != 0 && i%100_000 == 0 {
-			log.Debug().Msgf("setLeaf i=%s, wr/s=%s",
-				humanize.Comma(int64(i)),
-				humanize.Comma(int64(100_000/time.Since(since).Seconds())),
-			)
-			since = time.Now()
-		}
-	}
-
-	err := tree.kv.setRoot(tree.root, tree.version)
-	if err != nil {
-		return nil, tree.version, err
-	}
-
-	tree.leaves = nil
-	tree.branches = nil
-	tree.orphans = nil
-
-	return tree.root.hash, tree.version, nil
-}
-
-func (tree *Tree) SaveVersionDiffs() ([]byte, int64, error) {
+func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.version++
 	sqlSave, err := newSqlSaveVersion(tree.sql, tree)
 	if err != nil {
@@ -234,318 +162,10 @@ func (tree *Tree) SaveVersionDiffs() ([]byte, int64, error) {
 	return tree.root.hash, tree.version, nil
 }
 
-func (tree *Tree) SaveVersion() ([]byte, int64, error) {
-	tree.version++
-	tree.sequence = 0
-
-	var sequence uint32
-	tree.deepHash(&sequence, tree.root)
-	//for _, node := range tree.leaves {
-	//	tree.cache.SetThis(node)
-	//}
-
-	start := time.Now()
-	_, _, err := tree.sql.BatchSet(tree.leaves, true)
-	if err != nil {
-		return nil, tree.version, err
-	}
-	dur := time.Since(start)
-	tree.metrics.WriteDurations = append(tree.metrics.WriteDurations, dur)
-	tree.metrics.WriteTime += dur
-	tree.metrics.WriteLeaves += int64(len(tree.leaves))
-
-	if tree.version == 1 {
-		// TODO
-		// psuedo hacky checkpoint here
-		err := tree.sql.NextShard()
-		if err != nil {
-			return nil, 0, nil
-		}
-
-		_, versions, err := tree.sql.BatchSet(tree.branches, false)
-		if err != nil {
-			return nil, tree.version, err
-		}
-
-		err = tree.sql.MapVersions(versions, tree.sql.shardId)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		err = tree.sql.addShardQuery()
-		if err != nil {
-			return nil, 0, err
-		}
-
-		log.Info().Msg("creating leaf index")
-		err = tree.sql.write.Exec("CREATE INDEX IF NOT EXISTS leaf_idx ON leaf (version, sequence)")
-		if err != nil {
-			return nil, tree.version, err
-		}
-		log.Info().Msg("creating leaf index done")
-	}
-
-	tree.leaves = nil
-	tree.branches = nil
-	tree.orphans = nil
-
-	if tree.sql != nil {
-		err = tree.sql.SaveRoot(tree.version, tree.root)
-		if err != nil {
-			return nil, tree.version, fmt.Errorf("failed to save root: %w", err)
-		}
-	}
-
-	/*
-		if tree.workingBytes > tree.maxWorkingSize {
-			log.Info().Msgf("checkpointing tree version=%d", tree.version)
-			if err := tree.sqlCheckpoint(); err != nil {
-				return nil, tree.version, err
-			}
-
-			tree.lastCheckpoint = tree.version
-			tree.orphans = nil
-			tree.workingBytes = 0
-			tree.workingSize = 0
-			tree.cache.Swap()
-
-			tree.root.leftNode = nil
-			tree.root.rightNode = nil
-		}
-	*/
-
-	return tree.root.hash, tree.version, nil
-}
-
-func (tree *Tree) asyncCheckpoint() error {
-	args := &checkpointArgs{
-		//delete:  tree.orphans,
-		version: tree.version,
-	}
-	tree.buildCheckpoint(tree.root, args)
-	if int64(len(args.set)) != tree.workingSize {
-		return fmt.Errorf("set count mismatch; expected=%d, actual=%d", tree.workingSize, len(args.set))
-	}
-	tree.checkpointer.ch <- args
-	return nil
-}
-
-func (tree *Tree) sqlCheckpoint() error {
-	start := time.Now()
-	args := &checkpointArgs{}
-	tree.buildCheckpoint(tree.root, args)
-	if int64(len(args.set)) != tree.workingSize {
-		return fmt.Errorf("set count mismatch; expected=%d, actual=%d", tree.workingSize, len(args.set))
-	}
-
-	//var memSize, dbSize uint64
-	err := tree.sql.NextShard()
-	if err != nil {
-		return err
-	}
-
-	dbSize, versions, err := tree.sql.BatchSet(args.set, false)
-	if err != nil {
-		return err
-	}
-
-	err = tree.sql.MapVersions(versions, tree.sql.shardId)
-	if err != nil {
-		return err
-	}
-
-	// this will pause async readers and flush the WAL
-	//err = tree.sql.resetShardQueries()
-	//if err != nil {
-	//	return err
-	//}
-
-	err = tree.sql.addShardQuery()
-	if err != nil {
-		return err
-	}
-
-	log.Info().Msgf("checkpoint done ver=%d dur=%s set=%s del=%s db_sz=%s rate=%s",
-		tree.version,
-		time.Since(start).Round(time.Millisecond),
-		humanize.Comma(int64(len(args.set))),
-		humanize.Comma(int64(len(args.delete))),
-		humanize.IBytes(uint64(dbSize)),
-		humanize.Comma(int64(float64(len(args.set))/time.Since(start).Seconds())),
-	)
-
-	if err := tree.sql.queryReport(10); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (tree *Tree) checkpoint() error {
-	start := time.Now()
-	stats := &saveStats{}
-
-	//log.Info().Msgf("dirty_count=%s", humanize.Comma(tree.dirtyCount(tree.root)))
-
-	setCount, err := tree.deepSave(tree.root, stats)
-	if err != nil {
-		return err
-	}
-
-	//sets := tree.buildCheckpoint(tree.root)
-	//if len(sets) != int(setCount) {
-	//	return fmt.Errorf("set count mismatch; expected=%d, actual=%d", len(sets), setCount)
-	//}
-
-	//for _, nk := range tree.orphans {
-	//	if err := tree.kv.Delete(nk); err != nil {
-	//		return err
-	//	}
-	//}
-
-	log.Info().Msgf("checkpoint; version=%s, set=%s, del=%s, ws_size=%s, ws_bz=%s, save_bz=%s, db_bz=%s, dur=%s",
-		humanize.Comma(tree.version),
-		humanize.Comma(setCount),
-		humanize.Comma(int64(len(tree.orphans))),
-		humanize.Comma(tree.workingSize),
-		humanize.IBytes(tree.workingBytes),
-		humanize.IBytes(stats.nodeBz),
-		humanize.IBytes(stats.dbBz),
-		time.Since(start).Round(time.Millisecond),
-	)
-
-	return nil
-}
-
 type saveStats struct {
 	nodeBz uint64
 	dbBz   uint64
 	count  int64
-}
-
-func (tree *Tree) deepHash(sequence *uint32, node *Node) (isLeaf bool, isDirty bool) {
-
-	isLeaf = node.isLeaf()
-
-	// if the node version is equal to the tree version, then this node was updated in this tree version (batch)
-	// and must be written to storage.
-	if node.nodeKey.Version() == tree.version {
-		isDirty = true
-		if isLeaf {
-			tree.leaves = append(tree.leaves, node)
-		} else {
-			tree.branches = append(tree.branches, node)
-		}
-	}
-
-	// tree nodes with a hash are already persisted.
-	// leaf nodes with a hash may or may not be persisted.
-	// either way we end recursion here.
-	if node.hash != nil {
-		return isLeaf, isDirty
-	}
-
-	// When reading leaves, this will initiate a read from storage for the sole purpose of producing a hash.
-	// Recall that a terminal tree node may have only updated one leaf this version.
-	// We can explore storing right/left hash in terminal tree nodes to avoid this, or changing the storage
-	// format to iavl v0 where left/right hash are stored in the node.
-	leftIsLeaf, leftisDirty := tree.deepHash(sequence, node.left(tree))
-	rightIsLeaf, rightIsDirty := tree.deepHash(sequence, node.right(tree))
-
-	node._hash(tree.version)
-
-	// will be returned to the pool in BatchSet if not below
-	if leftIsLeaf {
-		if !leftisDirty {
-			tree.pool.Put(node.leftNode)
-		}
-		node.leftNode = nil
-	}
-	if rightIsLeaf {
-		if !rightIsDirty {
-			tree.pool.Put(node.rightNode)
-		}
-		node.rightNode = nil
-	}
-
-	return false, isDirty
-}
-
-func (tree *Tree) dirtyCount(node *Node) int64 {
-	var n int64
-	if node.dirty {
-		n = 1
-	}
-
-	if !node.isLeaf() {
-		return n + tree.dirtyCount(node.left(tree)) + tree.dirtyCount(node.right(tree))
-	} else {
-		return n
-	}
-}
-
-func (tree *Tree) buildCheckpoint(node *Node, args *checkpointArgs) {
-	if node == nil || node.nodeKey.Version() <= tree.lastCheckpoint {
-		return
-	}
-
-	tree.cache.Set(node)
-	node.dirty = false
-
-	n := tree.pool.Get()
-	n.subtreeHeight = node.subtreeHeight
-	n.size = node.size
-	n.key = node.key
-	n.hash = node.hash
-	n.nodeKey = node.nodeKey
-	n.leftNodeKey = node.leftNodeKey
-	n.rightNodeKey = node.rightNodeKey
-
-	if node.isLeaf() {
-		args.set = append(args.set, n)
-	} else {
-		args.set = append(args.set, n)
-		tree.buildCheckpoint(node.leftNode, args)
-		tree.buildCheckpoint(node.rightNode, args)
-
-		node.leftNode = nil
-		node.rightNode = nil
-	}
-}
-
-func (tree *Tree) deepSave(node *Node, stats *saveStats) (count int64, err error) {
-	if node.nodeKey.Version() <= tree.lastCheckpoint {
-		return 0, nil
-	}
-
-	if n, err := tree.kv.Set(node); err != nil {
-		return count, err
-	} else {
-		stats.dbBz += uint64(n)
-	}
-	stats.nodeBz += node.sizeBytes()
-
-	node.dirty = false
-	tree.cache.Set(node)
-
-	if !node.isLeaf() && node.leftNode != nil {
-		leftCount, err := tree.deepSave(node.leftNode, stats)
-		if err != nil {
-			return count, err
-		}
-		rightCount, err := tree.deepSave(node.rightNode, stats)
-		if err != nil {
-			return count, err
-		}
-
-		// clear children to prevent memory leaks here. after each checkpoint the tree is purged.
-		node.leftNode = nil
-		node.rightNode = nil
-
-		return leftCount + rightCount + 1, nil
-	} else {
-		return 1, nil
-	}
 }
 
 // Set sets a key in the working tree. Nil values are invalid. The given
@@ -575,7 +195,7 @@ func (tree *Tree) set(key []byte, value []byte) (updated bool, err error) {
 	}
 
 	if tree.root == nil {
-		tree.root = tree.NewNode(key, value, tree.version)
+		tree.root = tree.NewNode(key, value)
 		return updated, nil
 	}
 
@@ -594,13 +214,13 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		case -1: // setKey < leafKey
 			tree.metrics.PoolGet += 2
 			parent := tree.pool.Get()
-			parent.nodeKey = tree.nextNodeKey()
 			parent.sortKey = MinRightToken(key, node.key)
+			parent.version = tree.version + 1
 			parent.key = node.key
 			parent.subtreeHeight = 1
 			parent.size = 2
 			parent.dirty = true
-			parent.setLeft(tree.NewNode(key, value, tree.version))
+			parent.setLeft(tree.NewNode(key, value))
 			parent.setRight(node)
 
 			tree.workingBytes += parent.sizeBytes()
@@ -609,14 +229,14 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		case 1: // setKey > leafKey
 			tree.metrics.PoolGet += 2
 			parent := tree.pool.Get()
-			parent.nodeKey = tree.nextNodeKey()
 			parent.sortKey = MinRightToken(key, node.key)
+			parent.version = tree.version + 1
 			parent.key = key
 			parent.subtreeHeight = 1
 			parent.size = 2
 			parent.dirty = true
 			parent.setLeft(node)
-			parent.setRight(tree.NewNode(key, value, tree.version))
+			parent.setRight(tree.NewNode(key, value))
 
 			tree.workingBytes += parent.sizeBytes()
 			tree.workingSize++
@@ -624,7 +244,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		default:
 			tree.mutateNode(node)
 			node.value = value
-			node._hash(tree.version + 1)
+			node._hash()
 			node.value = nil
 			return node, true, nil
 		}
@@ -809,7 +429,7 @@ func (tree *Tree) mutateNode(node *Node) {
 		return
 	}
 	node.hash = nil
-	node.nodeKey = tree.nextNodeKey()
+	node.version = tree.version + 1
 
 	if node.dirty {
 		return
@@ -832,16 +452,10 @@ func (tree *Tree) addOrphan(node *Node) {
 }
 
 // NewNode returns a new node from a key, value and version.
-func (tree *Tree) NewNode(key []byte, value []byte, version int64) *Node {
-	//node := &Node{
-	//	key:           key,
-	//	value:         value,
-	//	subtreeHeight: 0,
-	//	size:          1,
-	//}
+func (tree *Tree) NewNode(key []byte, value []byte) *Node {
 	node := tree.pool.Get()
 
-	node.nodeKey = tree.nextNodeKey()
+	node.version = tree.version + 1
 	tree.leafSequence++
 	node.leafSeq = tree.leafSequence
 
@@ -851,7 +465,7 @@ func (tree *Tree) NewNode(key []byte, value []byte, version int64) *Node {
 	node.subtreeHeight = 0
 	node.size = 1
 
-	node._hash(version + 1)
+	node._hash()
 	node.value = nil
 	node.dirty = true
 	tree.workingBytes += node.sizeBytes()

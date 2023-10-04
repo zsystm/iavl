@@ -68,9 +68,7 @@ type Node struct {
 	sortKey       []byte
 	value         []byte
 	hash          []byte
-	nodeKey       NodeKey
-	leftNodeKey   NodeKey
-	rightNodeKey  NodeKey
+	version       int64
 	size          int64
 	leftNode      *Node
 	rightNode     *Node
@@ -150,14 +148,11 @@ func (node *Node) getLeftNode(t *Tree) (*Node, error) {
 	if node.leftNode != nil {
 		return node.leftNode, nil
 	}
-	node.leftNode = t.cache.Get(node.leftNodeKey)
+	//node.leftNode = t.cache.Get(node.leftNodeKey)
 	if node.leftNode == nil {
 		var err error
-		if t.kv == nil {
-			node.leftNode, err = t.sql.getLeftNode(node)
-		} else {
-			node.leftNode, err = t.kv.getLeftNode(node)
-		}
+		node.leftNode, err = t.sql.getLeftNode(node)
+
 		if err != nil {
 			return nil, err
 		}
@@ -172,14 +167,11 @@ func (node *Node) getRightNode(t *Tree) (*Node, error) {
 	if node.rightNode != nil {
 		return node.rightNode, nil
 	}
-	node.rightNode = t.cache.Get(node.rightNodeKey)
+	//node.rightNode = t.cache.Get(node.rightNodeKey)
 	if node.rightNode == nil {
 		var err error
-		if t.kv == nil {
-			node.rightNode, err = t.sql.getRightNode(node)
-		} else {
-			node.rightNode, err = t.kv.getRightNode(node)
-		}
+		node.rightNode, err = t.sql.getRightNode(node)
+
 		if err != nil {
 			return nil, err
 		}
@@ -375,13 +367,13 @@ var hashPool = &sync.Pool{
 
 // Computes the hash of the node without computing its descendants. Must be
 // called on nodes which have descendant node hashes already computed.
-func (node *Node) _hash(version int64) []byte {
+func (node *Node) _hash() []byte {
 	if node.hash != nil {
 		return node.hash
 	}
 
 	h := hashPool.Get().(hash.Hash)
-	if err := node.writeHashBytes(h, version); err != nil {
+	if err := node.writeHashBytes(h); err != nil {
 		return nil
 	}
 	node.hash = h.Sum(nil)
@@ -391,7 +383,7 @@ func (node *Node) _hash(version int64) []byte {
 	return node.hash
 }
 
-func (node *Node) writeHashBytes(w io.Writer, version int64) error {
+func (node *Node) writeHashBytes(w io.Writer) error {
 	var (
 		n   int
 		buf [binary.MaxVarintLen64]byte
@@ -405,7 +397,7 @@ func (node *Node) writeHashBytes(w io.Writer, version int64) error {
 	if _, err := w.Write(buf[0:n]); err != nil {
 		return fmt.Errorf("writing size, %w", err)
 	}
-	n = binary.PutVarint(buf[:], version)
+	n = binary.PutVarint(buf[:], node.version)
 	if _, err := w.Write(buf[0:n]); err != nil {
 		return fmt.Errorf("writing version, %w", err)
 	}
@@ -446,6 +438,8 @@ func EncodeBytes(w io.Writer, bz []byte) error {
 
 // MakeNode constructs a *Node from an encoded byte slice.
 func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
+	panic("not implemented")
+
 	// Read node header (height, size, version, key).
 	height, n, err := encoding.DecodeVarint(buf)
 	if err != nil {
@@ -476,7 +470,7 @@ func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 
 	node := pool.Get()
 	node.subtreeHeight = int8(height)
-	node.nodeKey = nodeKey
+	//node.nodeKey = nodeKey
 	node.size = size
 	node.key = key
 	node.hash = hash
@@ -496,13 +490,14 @@ func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 		var leftNk, rightNk NodeKey
 		copy(leftNk[:], leftNodeKey)
 		copy(rightNk[:], rightNodeKey)
-		node.leftNodeKey = leftNk
-		node.rightNodeKey = rightNk
+		//node.leftNodeKey = leftNk
+		//node.rightNodeKey = rightNk
 	}
 	return node, nil
 }
 
 func (node *Node) WriteBytes(w io.Writer) error {
+	panic("not implemented")
 	if node == nil {
 		return errors.New("cannot write nil node")
 	}
@@ -520,7 +515,7 @@ func (node *Node) WriteBytes(w io.Writer) error {
 		return fmt.Errorf("writing key; %w", cause)
 	}
 
-	if len(node.hash) != hashSize {
+	if len(node.hash) != 32 {
 		return fmt.Errorf("hash has unexpected length: %d", len(node.hash))
 	}
 	cause = encoding.EncodeBytes(w, node.hash)
@@ -528,23 +523,23 @@ func (node *Node) WriteBytes(w io.Writer) error {
 		return fmt.Errorf("writing hash; %w", cause)
 	}
 
-	if !node.isLeaf() {
-		if node.leftNodeKey.IsEmpty() {
-			return fmt.Errorf("left node key is nil")
-		}
-		cause = encoding.EncodeBytes(w, node.leftNodeKey[:])
-		if cause != nil {
-			return fmt.Errorf("writing left node key; %w", cause)
-		}
-
-		if node.rightNodeKey.IsEmpty() {
-			return fmt.Errorf("right node key is nil")
-		}
-		cause = encoding.EncodeBytes(w, node.rightNodeKey[:])
-		if cause != nil {
-			return fmt.Errorf("writing right node key; %w", cause)
-		}
-	}
+	//if !node.isLeaf() {
+	//	if node.leftNodeKey.IsEmpty() {
+	//		return fmt.Errorf("left node key is nil")
+	//	}
+	//	cause = encoding.EncodeBytes(w, node.leftNodeKey[:])
+	//	if cause != nil {
+	//		return fmt.Errorf("writing left node key; %w", cause)
+	//	}
+	//
+	//	if node.rightNodeKey.IsEmpty() {
+	//		return fmt.Errorf("right node key is nil")
+	//	}
+	//	cause = encoding.EncodeBytes(w, node.rightNodeKey[:])
+	//	if cause != nil {
+	//		return fmt.Errorf("writing right node key; %w", cause)
+	//	}
+	//}
 	return nil
 }
 
@@ -557,7 +552,7 @@ func (node *Node) Bytes() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-var nodeSize = uint64(unsafe.Sizeof(Node{})) + hashSize
+var nodeSize = uint64(unsafe.Sizeof(Node{})) + 32
 
 func (node *Node) varSize() uint64 {
 	return uint64(len(node.key))

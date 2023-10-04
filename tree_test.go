@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cosmos/iavl/v2/leveldb"
 	"github.com/cosmos/iavl/v2/metrics"
 	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/dustin/go-humanize"
@@ -31,10 +30,9 @@ func MemUsage() string {
 
 func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cnt int64) {
 	var (
-		hash                        []byte
-		version                     int64
-		err                         error
-		lastCacheMiss, lastCacheHit int64
+		hash    []byte
+		version int64
+		err     error
 	)
 	cnt = 1
 
@@ -85,6 +83,7 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 			key := node.Key
 
 			if !node.Delete {
+				//fmt.Printf("set key=%x\n", key)
 				_, err = tree.Set(key, node.Value)
 				require.NoError(t, err)
 			} else {
@@ -95,31 +94,15 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 			if cnt%sampleRate == 0 {
 				dur := time.Since(since)
 
-				var hitCount, missCount int64
-				if tree.cache.hitCount < lastCacheHit {
-					hitCount = tree.cache.hitCount
-				} else {
-					hitCount = tree.cache.hitCount - lastCacheHit
-				}
-				if tree.cache.missCount < lastCacheMiss {
-					missCount = tree.cache.missCount
-				} else {
-					missCount = tree.cache.missCount - lastCacheMiss
-				}
-				lastCacheHit = tree.cache.hitCount
-				lastCacheMiss = tree.cache.missCount
-
-				fmt.Printf("leaves=%s time=%s last=%s μ=%s version=%d Δhit=%s Δmiss=%s %s\n",
+				fmt.Printf("leaves=%s time=%s last=%s μ=%s version=%d %s\n",
 					humanize.Comma(cnt),
 					dur.Round(time.Millisecond),
 					humanize.Comma(int64(float64(sampleRate)/time.Since(since).Seconds())),
 					humanize.Comma(int64(float64(cnt)/time.Since(itrStart).Seconds())),
 					version,
-					humanize.Comma(hitCount),
-					humanize.Comma(missCount),
 					MemUsage())
 
-				if tree.metrics.WriteTime > 0 {
+				if tree.metrics.WriteTime > 0 && tree.metrics.WriteLeaves > 0 {
 					fmt.Printf("writes: cnt=%s wr/s=%s dur/wr=%s dur=%s\n",
 						humanize.Comma(tree.metrics.WriteLeaves),
 						humanize.Comma(int64(float64(tree.metrics.WriteLeaves)/tree.metrics.WriteTime.Seconds())),
@@ -128,14 +111,8 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 					)
 				}
 
-				if tree.kv == nil {
-					if err := tree.sql.queryReport(0); err != nil {
-						t.Fatalf("query report err %v", err)
-					}
-				} else {
-					if err = tree.kv.readReport(); err != nil {
-						t.Fatalf("read report err %v", err)
-					}
+				if err := tree.sql.queryReport(0); err != nil {
+					t.Fatalf("query report err %v", err)
 				}
 
 				fmt.Println()
@@ -150,11 +127,7 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 			//if cnt%(sampleRate*4) == 0 {
 			//}
 		}
-		if tree.kv == nil {
-			hash, version, err = tree.SaveVersionDiffs()
-		} else {
-			hash, version, err = tree.SaveVersionKV()
-		}
+		hash, version, err = tree.SaveVersion()
 
 		require.NoError(t, err)
 		if version == opts.Until {
@@ -227,31 +200,6 @@ type treeStat struct {
 	size uint64
 }
 
-func treeAndDbEqual(t *testing.T, tree *Tree, node Node, stat *treeStat) {
-	dbNode, err := tree.kv.Get(node.nodeKey)
-	if err != nil {
-		t.Fatalf("error getting node from db: %s", err)
-	}
-	stat.size += node.sizeBytes()
-	require.NoError(t, err)
-	require.NotNil(t, dbNode)
-	require.Equal(t, dbNode.nodeKey, node.nodeKey)
-	require.Equal(t, dbNode.key, node.key)
-	require.Equal(t, dbNode.hash, node.hash)
-	require.Equal(t, dbNode.size, node.size)
-	require.Equal(t, dbNode.subtreeHeight, node.subtreeHeight)
-	if node.isLeaf() {
-		return
-	}
-	require.Equal(t, dbNode.leftNodeKey, node.leftNodeKey)
-	require.Equal(t, dbNode.rightNodeKey, node.rightNodeKey)
-
-	leftNode := *node.left(tree)
-	rightNode := *node.right(tree)
-	treeAndDbEqual(t, tree, leftNode, stat)
-	treeAndDbEqual(t, tree, rightNode, stat)
-}
-
 var osmoScalePath = fmt.Sprintf("%s/src/scratch/sqlite-osmo", os.Getenv("HOME"))
 
 func TestBuild_OsmoScale(t *testing.T) {
@@ -265,7 +213,6 @@ func TestBuild_OsmoScale(t *testing.T) {
 		pool:           pool,
 		metrics:        &metrics.TreeMetrics{},
 		sql:            sql,
-		cache:          NewNodeCache(),
 		maxWorkingSize: 1024 * 1024 * 1024,
 	}
 
@@ -351,32 +298,6 @@ func TestOsmoLike_ColdStart(t *testing.T) {
 	require.NoError(t, sql.Close())
 }
 
-func TestOsmoLike_LevelDb(t *testing.T) {
-	tmpDir := "/tmp/iavl-init"
-
-	pool := NewNodePool()
-	sql, err := NewSqliteDb(pool, tmpDir, false)
-	require.NoError(t, err)
-	levelDb, err := leveldb.New("iavl-leveldb", tmpDir)
-	require.NoError(t, err)
-
-	tree := &Tree{
-		pool:           pool,
-		metrics:        &metrics.TreeMetrics{},
-		sql:            sql,
-		cache:          NewNodeCache(),
-		maxWorkingSize: 2 * 1024 * 1024 * 1024,
-		kv:             NewKvDB(levelDb, pool),
-	}
-	opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/osmo-like/v2")
-
-	require.NoError(t, tree.LoadVersionKV(1))
-	require.NoError(t, err)
-
-	testTreeBuild(t, tree, opts)
-	require.NoError(t, sql.Close())
-}
-
 func TestTree_Import(t *testing.T) {
 	tmpDir := "/Users/mattk/src/scratch/sqlite/height-zero"
 
@@ -407,7 +328,7 @@ func TestTree_Rehash(t *testing.T) {
 		node.hash = nil
 		step(node.left(tree))
 		step(node.right(tree))
-		node._hash(1)
+		node._hash()
 	}
 	step(tree.root)
 	require.Equal(t, savedHash, tree.root.hash)

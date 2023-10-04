@@ -88,11 +88,8 @@ func (np *NodePool) Put(node *Node) {
 }
 
 func (np *NodePool) resetNode(node *Node) {
-	node.leftNodeKey = emptyNodeKey
-	node.rightNodeKey = emptyNodeKey
 	node.rightNode = nil
 	node.leftNode = nil
-	node.nodeKey = emptyNodeKey
 	node.hash = nil
 	node.key = nil
 	node.value = nil

@@ -231,7 +231,7 @@ func treeCommand() *cobra.Command {
 				if useKv {
 					lastHash, lastVersion, err = tree.SaveVersionKV()
 				} else {
-					lastHash, lastVersion, err = tree.SaveVersionDiffs()
+					lastHash, lastVersion, err = tree.SaveVersion()
 				}
 				if err != nil {
 					return err

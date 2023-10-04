@@ -250,7 +250,7 @@ func (sql *SqliteDb) BatchSet(nodes []*Node, leaves bool) (n int64, versions []i
 	}
 	since := time.Now()
 	for i, node := range nodes {
-		versionMap[node.nodeKey.Version()] = true
+		versionMap[node.version] = true
 		bz, err := node.Bytes()
 		byteCount += int64(len(bz))
 		if err != nil {
@@ -351,12 +351,10 @@ func (sql *SqliteDb) getLeaf(seq leafSeq) (*Node, error) {
 	//log.Info().Msgf("leaf found: %d", seq)
 
 	node := sql.pool.Get()
-	var version int64
-	err = sql.queryLeaf.Scan(&version, &node.key, &node.hash)
+	err = sql.queryLeaf.Scan(&node.version, &node.key, &node.hash)
 	if err != nil {
 		return nil, err
 	}
-	node.nodeKey = NewNodeKey(version, 0)
 	node.leafSeq = seq
 
 	err = sql.queryLeaf.Reset()
@@ -434,7 +432,6 @@ func (sql *SqliteDb) getBranch(bk *branchKey) (*Node, error) {
 		return nil, err
 	}
 	var (
-		version                            int64
 		leftSortKey, rightSortKey          []byte
 		leftLeafSeq, rightLeafSeq, sHeight int
 	)
@@ -442,7 +439,7 @@ func (sql *SqliteDb) getBranch(bk *branchKey) (*Node, error) {
 	err = sql.queryBranch.Scan(
 		&node.sortKey,
 		&sHeight,
-		&version,
+		&node.version,
 		&node.size,
 		&node.key,
 		&node.hash,
@@ -456,7 +453,6 @@ func (sql *SqliteDb) getBranch(bk *branchKey) (*Node, error) {
 	}
 
 	node.subtreeHeight = int8(sHeight)
-	node.nodeKey = NewNodeKey(version, 0)
 	node.leftLeaf = leafSeq(leftLeafSeq)
 	node.rightLeaf = leafSeq(rightLeafSeq)
 
@@ -868,7 +864,8 @@ func (snap *sqliteSnapshot) writeStep(node *Node) error {
 	if err != nil {
 		return err
 	}
-	err = snap.batch.Exec(snap.ordinal, node.nodeKey.Version(), int(node.nodeKey.Sequence()), nodeBz)
+	// TODO sequence?
+	err = snap.batch.Exec(snap.ordinal, node.version, 0, nodeBz)
 	if err != nil {
 		return err
 	}
@@ -992,7 +989,7 @@ func rehashTree(version int64, node *Node) {
 	rehashTree(version, node.leftNode)
 	rehashTree(version, node.rightNode)
 
-	node._hash(version)
+	node._hash()
 }
 
 type sqliteImport struct {
@@ -1125,8 +1122,8 @@ func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
 	if node.sortKey == nil && node.leafSeq == 0 {
 		panic("found a node with nil sortKey and leafSeq")
 	}
-	// abort traversal on branch node with a hash - it is already persisted and therefore so is the subtree
-	if node.hash != nil && !node.isLeaf() {
+	// abort traversal on clean nodes
+	if node.version < sv.tree.version {
 		return nil
 	}
 	// post-order, LRN traversal for non-leafs
@@ -1140,18 +1137,20 @@ func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
 	}
 
 	// hash & save node
-	node._hash(sv.tree.version)
+	node._hash()
 	switch {
-	case node.isLeaf() && node.leafSeq > sv.tree.lastLeafSequence:
-		if err = sv.leafInsert.Exec(int(node.leafSeq), node.nodeKey.Version(), node.key, node.hash); err != nil {
-			return fmt.Errorf("leaf seq id %d failed: %w", node.leafSeq, err)
+	case node.isLeaf() && node.version >= sv.tree.version:
+		if node.leafSeq > sv.tree.lastLeafSequence {
+			if err = sv.leafInsert.Exec(int(node.leafSeq), node.version, node.key, node.hash); err != nil {
+				return fmt.Errorf("leaf seq id %d failed: %w", node.leafSeq, err)
+			}
+		} else {
+			// i may be able to skip storing/writing version to save some writes.
+			if err = sv.leafUpdate.Exec(node.key, node.version, node.hash, int(node.leafSeq)); err != nil {
+				return err
+			}
 		}
-		sv.sql.pool.Put(node)
 		sv.sql.metrics.WriteLeaves++
-	case node.isLeaf():
-		if err = sv.leafUpdate.Exec(node.key, node.nodeKey.Version(), node.hash, int(node.leafSeq)); err != nil {
-			return err
-		}
 		sv.sql.pool.Put(node)
 	case sv.saveBranches && (node.lastBranchKey == nil || !node.lastBranchKey.Equals(node)):
 		var leftSortKey, rightSortKey []byte
@@ -1165,7 +1164,7 @@ func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
 		if err = sv.branchInsert.Exec(
 			node.sortKey,
 			int(node.subtreeHeight),
-			node.nodeKey.Version(),
+			node.version,
 			node.size,
 			node.key,
 			node.hash,
