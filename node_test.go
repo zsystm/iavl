@@ -5,11 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
-	"os"
-	"sort"
 	"testing"
 
-	"github.com/cosmos/iavl-bench/bench"
+	"github.com/bvinc/go-sqlite-lite/sqlite3"
 	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -68,192 +66,80 @@ func TestMinRightToken_Gen(t *testing.T) {
 }
 
 func TestTreeSanity(t *testing.T) {
-	outDir := "/tmp/tree_viz"
-	require.NoError(t, os.RemoveAll(outDir))
-	require.NoError(t, os.Mkdir(outDir, 0755))
-
-	//gen := bench.ChangesetGenerator{
-	//	Seed:             77,
-	//	KeyMean:          4,
-	//	KeyStdDev:        1,
-	//	ValueMean:        50,
-	//	ValueStdDev:      15,
-	//	InitialSize:      1000,
-	//	FinalSize:        10000,
-	//	Versions:         5,
-	//	ChangePerVersion: 10,
-	//	DeleteFraction:   0.2,
-	//}
-	opts := testutil.NewTreeBuildOptions()
-	//itr, err := gen.Iterator()
-	var err error
-	itr := opts.Iterator
-	require.NoError(t, err)
-	tree := NewTree(nil, NewNodePool())
-	for ; itr.Valid(); err = itr.Next() {
-		require.NoError(t, err)
-		nodes := itr.Nodes()
-		for ; nodes.Valid(); err = nodes.Next() {
-			require.NoError(t, err)
-			node := nodes.GetNode()
-			if node.Delete {
-				_, _, err := tree.Remove(node.Key)
+	cases := []struct {
+		name   string
+		treeFn func() *Tree
+		hashFn func(*Tree) []byte
+	}{
+		{
+			name: "sqlite",
+			treeFn: func() *Tree {
+				pool := NewNodePool()
+				sql := &SqliteDb{
+					shards:       make(map[int64]*sqlite3.Stmt),
+					versionShard: make(map[int64]int64),
+					connString:   "file::memory:?cache=shared",
+					pool:         pool,
+				}
+				require.NoError(t, sql.init(true))
+				return NewTree(sql, pool)
+			},
+			hashFn: func(tree *Tree) []byte {
+				hash, _, err := tree.SaveVersion()
 				require.NoError(t, err)
-			} else {
-				_, err := tree.Set(node.Key, node.Value)
-				require.NoError(t, err)
-			}
-		}
-		switch itr.Version() {
-		case 1:
-			rehashTree(tree.root)
-			require.Equal(t, "48c3113b8ba523d3d539d8aea6fce28814e5688340ba7334935c1248b6c11c7a", hex.EncodeToString(tree.root.hash))
-			fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
-		case 150:
-			rehashTree(tree.root)
-			require.Equal(t, "876e9b511761011c273b641d4a43f510568760203a43b07d5cc3ff7b9eb8dbfb", hex.EncodeToString(tree.root.hash))
-			fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
-			return
-		}
-
-		//f, err := os.Create(fmt.Sprintf("%s/version%d.dot", outDir, itr.Version()))
-		//require.NoError(t, err)
-		//g := writeDotGraph(tree.root, &dot.Graph{})
-		//_, err = f.Write([]byte(g.String()))
-		//require.NoError(t, err)
-	}
-}
-
-func TestTokenizedTree(t *testing.T) {
-	// can a total order of (sortKey, height) be built to satisfy a traversal order of the tree?
-	// in-order seems the most possible.
-
-	outDir := "/tmp/tree_viz"
-	require.NoError(t, os.RemoveAll(outDir))
-	require.NoError(t, os.Mkdir(outDir, 0755))
-
-	var inOrder func(node *Node) []*Node
-	inOrder = func(node *Node) (nodes []*Node) {
-		if node == nil {
-			return nil
-		}
-		nodes = append(nodes, inOrder(node.leftNode)...)
-		nodes = append(nodes, node)
-		nodes = append(nodes, inOrder(node.rightNode)...)
-		return nodes
+				return hash
+			},
+		},
+		{
+			name: "no_db",
+			treeFn: func() *Tree {
+				pool := NewNodePool()
+				return NewTree(nil, pool)
+			},
+			hashFn: func(tree *Tree) []byte {
+				rehashTree(tree.root)
+				tree.version++
+				return tree.root.hash
+			},
+		},
 	}
 
-	var preOrder func(node *Node) []*Node
-	preOrder = func(node *Node) (nodes []*Node) {
-		if node == nil {
-			return nil
-		}
-
-		nodes = append(nodes, node)
-		nodes = append(nodes, preOrder(node.leftNode)...)
-		nodes = append(nodes, preOrder(node.rightNode)...)
-		return nodes
-	}
-
-	gen := bench.ChangesetGenerator{
-		Seed:             77,
-		KeyMean:          4,
-		KeyStdDev:        1,
-		ValueMean:        10,
-		ValueStdDev:      1,
-		InitialSize:      1000,
-		FinalSize:        10000,
-		Versions:         20,
-		ChangePerVersion: 10,
-		DeleteFraction:   0.2,
-	}
-	itr, err := gen.Iterator()
-	require.NoError(t, err)
-	tree := NewTree(nil, NewNodePool())
-	//tree.emitDotGraphs = true
-
-	step := 0
-	for ; itr.Valid(); err = itr.Next() {
-		if itr.Version() > 1 {
-			break
-		}
-		require.NoError(t, err)
-		nodes := itr.Nodes()
-		for ; nodes.Valid(); err = nodes.Next() {
-			//if i > 7 {
-			//	break
-			//}
-
-			require.NoError(t, err)
-			node := nodes.GetNode()
-			strKey := hex.EncodeToString(node.Key)
-			bzKey := []byte(strKey)
-
-			step++
-			if node.Delete {
-				_, _, err := tree.Remove(bzKey)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := tc.treeFn()
+			opts := testutil.NewTreeBuildOptions()
+			itr := opts.Iterator
+			var err error
+			for ; itr.Valid(); err = itr.Next() {
+				if itr.Version() > 150 {
+					break
+				}
 				require.NoError(t, err)
-			} else {
-				_, err := tree.Set(bzKey, node.Value)
-				require.NoError(t, err)
-			}
-			for j, dg := range tree.dotGraphs {
-				f, err := os.Create(fmt.Sprintf("%s/step_%04d_%d.dot", outDir, step, j))
-				require.NoError(t, err)
-				_, err = f.Write([]byte(dg.String()))
-				require.NoError(t, err)
-				require.NoError(t, f.Close())
-			}
-			tree.dotGraphs = nil
-
-			// verify the tree at every step
-
-			orderedNodes := preOrder(tree.root)
-			sort.Slice(orderedNodes, func(i, j int) bool {
-				a := orderedNodes[i]
-				b := orderedNodes[j]
-				res := bytes.Compare(a.sortKey, b.sortKey)
-				// order by (key ASC, height DESC)
-				if res != 0 {
-					return res < 0
-				} else {
-					//fmt.Printf("resolve collision sortKey=%s\n", orderedNodes[j].sortKey)
-					// height DESC
-					// return a.subtreeHeight > b.subtreeHeight
-
-					// or, more specifically below.  sortKey collisions may only occur between leaf and branch nodes.
-					// in this case choose the leaf node first for in-order traversal.
-					switch {
-					case a.isLeaf() && b.isLeaf():
-						panic("invariant violated: two leaves with same sortKey")
-					case a.isLeaf() && !b.isLeaf():
-						return false
-					case !a.isLeaf() && b.isLeaf():
-						return true
-					default:
-						panic("invariant violated: two branches with same sortKey")
+				nodes := itr.Nodes()
+				for ; nodes.Valid(); err = nodes.Next() {
+					require.NoError(t, err)
+					node := nodes.GetNode()
+					if node.Delete {
+						_, _, err := tree.Remove(node.Key)
+						require.NoError(t, err)
+					} else {
+						_, err := tree.Set(node.Key, node.Value)
+						require.NoError(t, err)
 					}
 				}
-			})
-
-			inOrderNodes := inOrder(tree.root)
-			var lastNode *Node
-			for i, n := range inOrderNodes {
-				//fmt.Printf("node: %s, %s, %d\n", string(n.key), string(n.sortKey), n.subtreeHeight)
-				if lastNode != nil {
-					require.LessOrEqual(t, lastNode.key, n.key)
-					if bytes.Equal(lastNode.key, n.key) {
-						// in-order assertion
-						require.Greater(t, lastNode.subtreeHeight, n.subtreeHeight)
-					}
-					require.Equalf(t, n.key, orderedNodes[i].key, "expected (%s, %d), got (%s, %d)",
-						string(n.key), n.subtreeHeight, string(orderedNodes[i].key), orderedNodes[i].subtreeHeight)
-					require.Equalf(t, n.subtreeHeight, orderedNodes[i].subtreeHeight,
-						"heights don't match, node.key: %s step=%d", n.key, step)
-					require.Equal(t, n, orderedNodes[i])
+				switch itr.Version() {
+				case 1:
+					h := tc.hashFn(tree)
+					require.Equal(t, "48c3113b8ba523d3d539d8aea6fce28814e5688340ba7334935c1248b6c11c7a", hex.EncodeToString(h))
+					require.Equal(t, int64(104938), tree.root.size)
+					fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), h, tree.root.size)
+				case 150:
+					h := tc.hashFn(tree)
+					require.Equal(t, "04c42dd1cec683cbbd4974027e4b003b848e389a33d03d7a9105183e6d108dd9", hex.EncodeToString(h))
+					require.Equal(t, int64(105030), tree.root.size)
+					fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), h, tree.root.size)
 				}
-				lastNode = n
 			}
-		}
+		})
 	}
 }

@@ -164,10 +164,21 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	return tree.root.hash, tree.version, nil
 }
 
-type saveStats struct {
-	nodeBz uint64
-	dbBz   uint64
-	count  int64
+func (tree *Tree) SaveVersionV2() ([]byte, int64, error) {
+	tree.version++
+	tree.deepHash(tree.root)
+	return tree.root.hash, tree.version, nil
+}
+
+func (tree *Tree) deepHash(node *Node) {
+	//if node.version != tree.version {
+	//	return
+	//}
+	if !node.isLeaf() {
+		tree.deepHash(node.left(tree))
+		tree.deepHash(node.right(tree))
+	}
+	node._hash()
 }
 
 // Set sets a key in the working tree. Nil values are invalid. The given

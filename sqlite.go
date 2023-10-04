@@ -38,6 +38,33 @@ type SqliteDb struct {
 	metrics *metrics.TreeMetrics
 }
 
+func (sql *SqliteDb) init(newDb bool) error {
+	var err error
+	sql.write, err = sqlite3.Open(sql.connString)
+	if err != nil {
+		return err
+	}
+
+	err = sql.write.Exec("PRAGMA synchronous=OFF;")
+	if err != nil {
+		return err
+	}
+
+	// wal_autocheckpoint is in pages, so we need to convert maxWalSizeBytes to pages
+	maxWalSizeBytes := 1024 * 1024 * 500
+	if err = sql.write.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", maxWalSizeBytes/os.Getpagesize())); err != nil {
+		return err
+	}
+
+	if newDb {
+		if err = sql.initNewDb(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func NewSqliteDb(pool *NodePool, path string, newDb bool) (*SqliteDb, error) {
 	sql := &SqliteDb{
 		shards:       make(map[int64]*sqlite3.Stmt),
@@ -45,34 +72,9 @@ func NewSqliteDb(pool *NodePool, path string, newDb bool) (*SqliteDb, error) {
 		connString:   fmt.Sprintf("file:%s/iavl-v2.db", path),
 		pool:         pool,
 	}
-
-	var err error
-	sql.write, err = sqlite3.Open(sql.connString)
-	if err != nil {
+	if err := sql.init(newDb); err != nil {
 		return nil, err
 	}
-
-	err = sql.write.Exec("PRAGMA synchronous=OFF;")
-	if err != nil {
-		return nil, err
-	}
-
-	// wal_autocheckpoint is in pages, so we need to convert maxWalSizeBytes to pages
-	maxWalSizeBytes := 1024 * 1024 * 500
-	if err = sql.write.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", maxWalSizeBytes/os.Getpagesize())); err != nil {
-		return nil, err
-	}
-
-	if newDb {
-		if err := sql.initNewDb(); err != nil {
-			return nil, err
-		}
-	}
-
-	//sql.treeInsert, err = sql.write.Prepare("INSERT INTO tree(node_key, bytes) VALUES (?, ?)")
-	//if err != nil {
-	//	return nil, err
-	//}
 
 	return sql, nil
 }
