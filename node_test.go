@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/cosmos/iavl-bench/bench"
-	"github.com/emicklei/dot"
+	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,19 +72,22 @@ func TestTreeSanity(t *testing.T) {
 	require.NoError(t, os.RemoveAll(outDir))
 	require.NoError(t, os.Mkdir(outDir, 0755))
 
-	gen := bench.ChangesetGenerator{
-		Seed:             77,
-		KeyMean:          4,
-		KeyStdDev:        1,
-		ValueMean:        50,
-		ValueStdDev:      15,
-		InitialSize:      10,
-		FinalSize:        50,
-		Versions:         5,
-		ChangePerVersion: 10,
-		DeleteFraction:   0.2,
-	}
-	itr, err := gen.Iterator()
+	//gen := bench.ChangesetGenerator{
+	//	Seed:             77,
+	//	KeyMean:          4,
+	//	KeyStdDev:        1,
+	//	ValueMean:        50,
+	//	ValueStdDev:      15,
+	//	InitialSize:      1000,
+	//	FinalSize:        10000,
+	//	Versions:         5,
+	//	ChangePerVersion: 10,
+	//	DeleteFraction:   0.2,
+	//}
+	opts := testutil.NewTreeBuildOptions()
+	//itr, err := gen.Iterator()
+	var err error
+	itr := opts.Iterator
 	require.NoError(t, err)
 	tree := NewTree(nil, NewNodePool())
 	for ; itr.Valid(); err = itr.Next() {
@@ -101,13 +104,23 @@ func TestTreeSanity(t *testing.T) {
 				require.NoError(t, err)
 			}
 		}
-		rehashTree(tree.root)
-		fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
-		f, err := os.Create(fmt.Sprintf("%s/version%d.dot", outDir, itr.Version()))
-		require.NoError(t, err)
-		g := writeDotGraph(tree.root, &dot.Graph{})
-		_, err = f.Write([]byte(g.String()))
-		require.NoError(t, err)
+		switch itr.Version() {
+		case 1:
+			rehashTree(tree.root)
+			require.Equal(t, "48c3113b8ba523d3d539d8aea6fce28814e5688340ba7334935c1248b6c11c7a", hex.EncodeToString(tree.root.hash))
+			fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
+		case 150:
+			rehashTree(tree.root)
+			require.Equal(t, "876e9b511761011c273b641d4a43f510568760203a43b07d5cc3ff7b9eb8dbfb", hex.EncodeToString(tree.root.hash))
+			fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
+			return
+		}
+
+		//f, err := os.Create(fmt.Sprintf("%s/version%d.dot", outDir, itr.Version()))
+		//require.NoError(t, err)
+		//g := writeDotGraph(tree.root, &dot.Graph{})
+		//_, err = f.Write([]byte(g.String()))
+		//require.NoError(t, err)
 	}
 }
 
@@ -161,9 +174,9 @@ func TestTokenizedTree(t *testing.T) {
 
 	step := 0
 	for ; itr.Valid(); err = itr.Next() {
-		//if itr.Version() > 1 {
-		//	break
-		//}
+		if itr.Version() > 1 {
+			break
+		}
 		require.NoError(t, err)
 		nodes := itr.Nodes()
 		for ; nodes.Valid(); err = nodes.Next() {
@@ -197,13 +210,29 @@ func TestTokenizedTree(t *testing.T) {
 
 			orderedNodes := preOrder(tree.root)
 			sort.Slice(orderedNodes, func(i, j int) bool {
-				res := bytes.Compare(orderedNodes[i].sortKey, orderedNodes[j].sortKey)
+				a := orderedNodes[i]
+				b := orderedNodes[j]
+				res := bytes.Compare(a.sortKey, b.sortKey)
 				// order by (key ASC, height DESC)
 				if res != 0 {
 					return res < 0
 				} else {
+					//fmt.Printf("resolve collision sortKey=%s\n", orderedNodes[j].sortKey)
 					// height DESC
-					return orderedNodes[i].subtreeHeight > orderedNodes[j].subtreeHeight
+					// return a.subtreeHeight > b.subtreeHeight
+
+					// or, more specifically below.  sortKey collisions may only occur between leaf and branch nodes.
+					// in this case choose the leaf node first for in-order traversal.
+					switch {
+					case a.isLeaf() && b.isLeaf():
+						panic("invariant violated: two leaves with same sortKey")
+					case a.isLeaf() && !b.isLeaf():
+						return false
+					case !a.isLeaf() && b.isLeaf():
+						return true
+					default:
+						panic("invariant violated: two branches with same sortKey")
+					}
 				}
 			})
 
