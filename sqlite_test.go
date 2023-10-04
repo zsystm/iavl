@@ -286,3 +286,10 @@ func TestMmap(t *testing.T) {
 	require.NoError(t, err)
 	fmt.Printf("res: %s\n", res)
 }
+
+func TestSqliteDb_LoadIntoMemory(t *testing.T) {
+	pool := NewNodePool()
+	sql, err := NewInMemorySqliteDb(pool)
+	require.NoError(t, err)
+	require.NoError(t, sql.LoadIntoMemory("/tmp/sortkey"))
+}

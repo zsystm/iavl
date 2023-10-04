@@ -8,7 +8,6 @@ import (
 
 	"github.com/cosmos/iavl-bench/bench"
 	"github.com/cosmos/iavl/v2"
-	"github.com/cosmos/iavl/v2/leveldb"
 	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/dustin/go-humanize"
 	"github.com/kocubinski/costor-api/compact"
@@ -170,14 +169,6 @@ func treeCommand() *cobra.Command {
 				return err
 			}
 			tree := iavl.NewTree(sql, pool)
-			levelDb, err := leveldb.New("iavl-leveldb", dbPath)
-			if err != nil {
-				return err
-			}
-
-			if useKv {
-				tree.SetKV(iavl.NewKvDB(levelDb, pool))
-			}
 
 			itr, err := getChangesetIterator(genType)
 			if err != nil {
@@ -228,11 +219,7 @@ func treeCommand() *cobra.Command {
 					}
 				}
 
-				if useKv {
-					lastHash, lastVersion, err = tree.SaveVersionKV()
-				} else {
-					lastHash, lastVersion, err = tree.SaveVersion()
-				}
+				lastHash, lastVersion, err = tree.SaveVersionV2()
 				if err != nil {
 					return err
 				}

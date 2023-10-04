@@ -170,6 +170,7 @@ func (tree *Tree) SaveVersionV2() ([]byte, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	sqlSave.saveBranches = tree.version == 1
 	if err = sqlSave.deepSaveV2(tree.root); err != nil {
 		return nil, 0, err
 	}
@@ -185,7 +186,12 @@ func (tree *Tree) SaveVersionV2() ([]byte, int64, error) {
 	tree.metrics.WriteTime += dur
 	tree.metrics.WriteLeaves += int64(sqlSave.currentBatch)
 
+	if err = tree.sql.SaveRoot(tree.version, tree.root); err != nil {
+		return nil, 0, fmt.Errorf("failed to save root: %w", err)
+	}
+
 	tree.lastLeafSequence = tree.leafSequence
+	tree.metrics.TreeOrphans += int64(len(tree.orphans))
 	tree.orphans = nil
 
 	return tree.root.hash, tree.version, nil
@@ -327,6 +333,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			fmt.Println("here")
 		}
 		if bytes.HasPrefix(key, node.sortKey) {
+			tree.metrics.TreeKeyReads++
 			if bytes.Compare(key, node.key) < 0 {
 				node.sortKey = MinRightToken(node.key, key)
 			} else {
@@ -444,6 +451,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 
 	node.setRight(newRightNode)
 	if newKey != nil {
+		tree.metrics.TreeKeyReads++
 		node.sortKey = MinRightToken(node.key, newKey)
 		node.key = newKey
 	}
@@ -511,7 +519,6 @@ func (tree *Tree) NewNode(key []byte, value []byte) *Node {
 	node.leafSeq = tree.leafSequence
 
 	node.key = key
-	node.sortKey = key
 	node.value = value
 	node.subtreeHeight = 0
 	node.size = 1

@@ -21,6 +21,8 @@ type TreeMetrics struct {
 	TreeUpdate        int64
 	TreeNewNode       int64
 	TreeDelete        int64
+	TreeOrphans       int64
+	TreeKeyReads      int64
 	PoolDirtyOverflow int64
 
 	WriteDurations []time.Duration

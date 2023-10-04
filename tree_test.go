@@ -94,12 +94,14 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 			if cnt%sampleRate == 0 {
 				dur := time.Since(since)
 
-				fmt.Printf("leaves=%s time=%s last=%s μ=%s version=%d %s\n",
+				fmt.Printf("leaves=%s time=%s last=%s μ=%s version=%d orphans=%s key_reads=%s %s\n",
 					humanize.Comma(cnt),
 					dur.Round(time.Millisecond),
 					humanize.Comma(int64(float64(sampleRate)/time.Since(since).Seconds())),
 					humanize.Comma(int64(float64(cnt)/time.Since(itrStart).Seconds())),
 					version,
+					humanize.Comma(tree.metrics.TreeOrphans),
+					humanize.Comma(tree.metrics.TreeKeyReads),
 					MemUsage())
 
 				if tree.metrics.WriteTime > 0 && tree.metrics.WriteLeaves > 0 {
@@ -122,6 +124,8 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 				tree.metrics.WriteDurations = nil
 				tree.metrics.WriteLeaves = 0
 				tree.metrics.WriteTime = 0
+				tree.metrics.TreeOrphans = 0
+				tree.metrics.TreeKeyReads = 0
 			}
 
 			//if cnt%(sampleRate*4) == 0 {
@@ -293,7 +297,26 @@ func TestOsmoLike_ColdStart(t *testing.T) {
 	tree := NewTree(sql, pool)
 	require.NoError(t, tree.LoadVersion(1))
 
-	opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/height-zero/v2")
+	opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/osmo-like/v2")
+
+	require.NoError(t, err)
+
+	testTreeBuild(t, tree, opts)
+	require.NoError(t, sql.Close())
+}
+
+func TestOsmoLike_InMemory(t *testing.T) {
+	tmpDir := "/tmp/sortkey"
+
+	pool := NewNodePool()
+	sql, err := NewInMemorySqliteDb(pool)
+	require.NoError(t, err)
+	require.NoError(t, sql.LoadIntoMemory(tmpDir))
+
+	tree := NewTree(sql, pool)
+	require.NoError(t, tree.LoadVersion(1))
+
+	opts := testutil.CompactedChangelogs("/Users/mattk/src/scratch/osmo-like/v2")
 
 	require.NoError(t, err)
 

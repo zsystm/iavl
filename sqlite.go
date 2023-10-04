@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aybabtme/uniplot/histogram"
@@ -82,6 +83,78 @@ func NewInMemorySqliteDb(pool *NodePool) (*SqliteDb, error) {
 	return sql, nil
 }
 
+func (sql *SqliteDb) LoadIntoMemory(path string) error {
+	connString := fmt.Sprintf("file:%s/iavl-v2.db", path)
+	if err := sql.write.Exec("ATTACH DATABASE ? AS disk", connString); err != nil {
+		return err
+	}
+	if err := sql.write.Exec("INSERT INTO main.leaf SELECT * FROM disk.leaf;"); err != nil {
+		return err
+	}
+	if err := sql.resetReadConn(); err != nil {
+		return err
+	}
+
+	q, err := sql.read.Prepare("SELECT count(*) FROM leaf")
+	if err != nil {
+		return err
+	}
+	if _, err = q.Step(); err != nil {
+		return err
+	}
+	count, ok, err := q.ColumnInt64(0)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("count not found")
+	}
+	log.Info().Msgf("loaded leaf count: %s", humanize.Comma(count))
+	if err = q.Close(); err != nil {
+		return err
+	}
+
+	err = sql.write.Exec("INSERT INTO main.branch SELECT * FROM disk.branch;")
+	if err != nil {
+		return err
+	}
+	q, err = sql.read.Prepare("SELECT count(*) FROM branch")
+	if err != nil {
+		return err
+	}
+	if _, err = q.Step(); err != nil {
+		return err
+	}
+	count, ok, err = q.ColumnInt64(0)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("count not found")
+	}
+	log.Info().Msgf("loaded branch count: %s", humanize.Comma(count))
+	if err = q.Close(); err != nil {
+		return err
+	}
+
+	if err = sql.write.Exec("INSERT INTO main.root SELECT * FROM disk.root;"); err != nil {
+		return err
+	}
+
+	since := time.Now()
+	log.Info().Msgf("creating indexes")
+	if err = sql.write.Exec("CREATE INDEX leaf_idx ON leaf (seq); CREATE INDEX branch_idx ON branch (sort_key);"); err != nil {
+		return err
+	}
+	log.Info().Msgf("indexes creation took %s", time.Since(since).Round(time.Millisecond))
+
+	if err = sql.write.Exec("DETACH DATABASE disk;"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func NewSqliteDb(pool *NodePool, path string, newDb bool) (*SqliteDb, error) {
 	sql := &SqliteDb{
 		shards:       make(map[int64]*sqlite3.Stmt),
@@ -98,6 +171,10 @@ func NewSqliteDb(pool *NodePool, path string, newDb bool) (*SqliteDb, error) {
 
 func (sql *SqliteDb) newReadConn() (*sqlite3.Conn, error) {
 	conn, err := sqlite3.Open(sql.connString)
+	if strings.Contains(sql.connString, "file::memory") {
+		return conn, nil
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -111,14 +188,18 @@ func (sql *SqliteDb) newReadConn() (*sqlite3.Conn, error) {
 
 func (sql *SqliteDb) resetReadConn() (err error) {
 	if sql.read != nil {
-		if err = sql.queryBranch.Close(); err != nil {
-			return err
+		if sql.queryBranch != nil {
+			if err = sql.queryBranch.Close(); err != nil {
+				return err
+			}
+			sql.queryBranch = nil
 		}
-		sql.queryBranch = nil
-		if err = sql.queryLeaf.Close(); err != nil {
-			return err
+		if sql.queryLeaf != nil {
+			if err = sql.queryLeaf.Close(); err != nil {
+				return err
+			}
+			sql.queryLeaf = nil
 		}
-		sql.queryLeaf = nil
 
 		err = sql.read.Close()
 		if err != nil {

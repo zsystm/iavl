@@ -22,9 +22,10 @@ type sqlSaveVersion struct {
 	leafUpdate   *sqlite3.Stmt
 	leafDelete   *sqlite3.Stmt
 
-	leafInserts []*Node
-	leafUpdates []*Node
-	evictions   []*Node
+	leafInserts   []*Node
+	leafUpdates   []*Node
+	branchInserts []*Node
+	evictions     []*Node
 }
 
 func newSqlSaveVersion(sql *SqliteDb, tree *Tree) (*sqlSaveVersion, error) {
@@ -84,18 +85,13 @@ func (sv *sqlSaveVersion) deepSaveV2(node *Node) (err error) {
 			panic("rightLeaf != rightNode.leafSeq")
 		}
 
+		if node.version == sv.tree.version && sv.saveBranches {
+			sv.branchInserts = append(sv.branchInserts, node)
+		}
+
 		if node.leftLeaf != 0 || node.rightLeaf != 0 {
 			sv.evictions = append(sv.evictions, node)
 		}
-
-		//if node.leftLeaf != 0 {
-		//	sv.sql.pool.Put(node.leftNode)
-		//	node.leftNode = nil
-		//}
-		//if node.rightLeaf != 0 {
-		//	sv.sql.pool.Put(node.rightNode)
-		//	node.rightNode = nil
-		//}
 	}
 
 	return nil
@@ -122,6 +118,34 @@ func (sv *sqlSaveVersion) upsert() error {
 			return err
 		}
 	}
+	for _, node := range sv.branchInserts {
+		var leftSortKey, rightSortKey []byte
+		if node.leftLeaf == 0 {
+			leftSortKey = node.leftNode.sortKey
+		}
+		if node.rightLeaf == 0 {
+			rightSortKey = node.rightNode.sortKey
+		}
+
+		if err := sv.branchInsert.Exec(
+			node.sortKey,
+			int(node.subtreeHeight),
+			node.version,
+			node.size,
+			node.key,
+			node.hash,
+			leftSortKey,
+			rightSortKey,
+			int(node.leftLeaf),
+			int(node.rightLeaf),
+		); err != nil {
+			return err
+		}
+		if err := sv.step(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -303,7 +327,7 @@ func (sv *sqlSaveVersion) finish() (err error) {
 
 	if sv.tree.version == 1 {
 		// TODO this is a hack for tests
-		if err = sv.tree.sql.write.Exec("CREATE UNIQUE INDEX leaf_idx on leaf (seq);"); err != nil {
+		if err = sv.tree.sql.write.Exec("CREATE INDEX leaf_idx on leaf (seq);"); err != nil {
 			return err
 		}
 		if err = sv.tree.sql.write.Exec("CREATE UNIQUE INDEX branch_idx on branch (sort_key);"); err != nil {
