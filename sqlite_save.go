@@ -69,29 +69,12 @@ func (sv *sqlSaveVersion) deepSaveV2(node *Node) (err error) {
 	}
 	node._hash()
 
-	if node.isLeaf() {
+	if node.isLeaf() && node.version == sv.tree.version {
 		if node.leafSeq > sv.tree.lastLeafSequence {
-			//if sv.tree.version != 1 {
-			//	log.Info().Msgf("inserting leaf seq=%d", node.leafSeq)
-			//}
-			//if err = sv.leafInsert.Exec(int(node.leafSeq), node.key, node.version, node.hash); err != nil {
-			//	return fmt.Errorf("leaf seq id %d failed: %w", node.leafSeq, err)
-			//}
 			sv.leafInserts = append(sv.leafInserts, node)
-		} else if node.version == sv.tree.version {
-			//if sv.tree.version != 1 {
-			//	log.Info().Msgf("updating leaf seq=%d", node.leafSeq)
-			//}
-
-			//if err = sv.leafUpdate.Exec(node.key, node.version, node.hash, int(node.leafSeq)); err != nil {
-			//	return err
-			//}
-			sv.leafUpdates = append(sv.leafUpdates, node)
 		} else {
-			log.Info().Msgf("skipping leaf seq=%d", node.leafSeq)
-			return nil
+			sv.leafUpdates = append(sv.leafUpdates, node)
 		}
-		sv.sql.metrics.WriteLeaves++
 	} else {
 		// branch invariants
 		if node.leftLeaf != node.leftNode.leafSeq {

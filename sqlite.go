@@ -56,6 +56,10 @@ func (sql *SqliteDb) init(newDb bool) error {
 		return err
 	}
 
+	if err = sql.write.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -8*1024*1024*1024)); err != nil {
+		return err
+	}
+
 	if newDb {
 		if err = sql.initNewDb(); err != nil {
 			return err
@@ -63,6 +67,19 @@ func (sql *SqliteDb) init(newDb bool) error {
 	}
 
 	return nil
+}
+
+func NewInMemorySqliteDb(pool *NodePool) (*SqliteDb, error) {
+	sql := &SqliteDb{
+		shards:       make(map[int64]*sqlite3.Stmt),
+		versionShard: make(map[int64]int64),
+		connString:   "file::memory:?cache=shared",
+		pool:         pool,
+	}
+	if err := sql.init(true); err != nil {
+		return nil, err
+	}
+	return sql, nil
 }
 
 func NewSqliteDb(pool *NodePool, path string, newDb bool) (*SqliteDb, error) {

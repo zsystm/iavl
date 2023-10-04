@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
 	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -80,16 +79,9 @@ func TestTreeSanity(t *testing.T) {
 				require.NoError(t, os.MkdirAll(dir, 0755))
 				pool := NewNodePool()
 
-				sql := &SqliteDb{
-					shards:       make(map[int64]*sqlite3.Stmt),
-					versionShard: make(map[int64]int64),
-					connString:   "file::memory:?cache=shared",
-					pool:         pool,
-				}
-				require.NoError(t, sql.init(true))
-
 				//sql, err := NewSqliteDb(pool, dir, true)
-				//require.NoError(t, err)
+				sql, err := NewInMemorySqliteDb(pool)
+				require.NoError(t, err)
 
 				require.NoError(t, sql.resetReadConn())
 				return NewTree(sql, pool)

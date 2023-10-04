@@ -154,6 +154,7 @@ func TestTree_Build(t *testing.T) {
 
 	pool := NewNodePool()
 	sql, err := NewSqliteDb(pool, tmpDir, true)
+	//sql, err := NewInMemorySqliteDb(pool)
 	tree := NewTree(sql, pool)
 	require.NoError(t, err)
 
