@@ -972,7 +972,7 @@ func (sql *SqliteDb) ImportSnapshot(version int64, loadLeaves bool) (*Node, erro
 		return nil, err
 	}
 
-	rehashTree(version, root)
+	rehashTree(root)
 	if !bytes.Equal(root.hash, tree.root.hash) {
 		return nil, fmt.Errorf("root hash mismatch: %x != %x", root.hash, tree.root.hash)
 	}
@@ -980,14 +980,14 @@ func (sql *SqliteDb) ImportSnapshot(version int64, loadLeaves bool) (*Node, erro
 	return root, nil
 }
 
-func rehashTree(version int64, node *Node) {
+func rehashTree(node *Node) {
 	if node.isLeaf() {
 		return
 	}
 	node.hash = nil
 
-	rehashTree(version, node.leftNode)
-	rehashTree(version, node.rightNode)
+	rehashTree(node.leftNode)
+	rehashTree(node.rightNode)
 
 	node._hash()
 }

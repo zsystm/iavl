@@ -66,6 +66,41 @@ func TestMinRightToken_Gen(t *testing.T) {
 	}
 }
 
+func TestTreeSanity(t *testing.T) {
+	gen := bench.ChangesetGenerator{
+		Seed:             77,
+		KeyMean:          4,
+		KeyStdDev:        1,
+		ValueMean:        50,
+		ValueStdDev:      15,
+		InitialSize:      10,
+		FinalSize:        50,
+		Versions:         5,
+		ChangePerVersion: 10,
+		DeleteFraction:   0.2,
+	}
+	itr, err := gen.Iterator()
+	require.NoError(t, err)
+	tree := NewTree(nil, NewNodePool())
+	for ; itr.Valid(); err = itr.Next() {
+		require.NoError(t, err)
+		nodes := itr.Nodes()
+		for ; nodes.Valid(); err = nodes.Next() {
+			require.NoError(t, err)
+			node := nodes.GetNode()
+			if node.Delete {
+				_, _, err := tree.Remove(node.Key)
+				require.NoError(t, err)
+			} else {
+				_, err := tree.Set(node.Key, node.Value)
+				require.NoError(t, err)
+			}
+		}
+		rehashTree(tree.root)
+		fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
+	}
+}
+
 func TestTokenizedTree(t *testing.T) {
 	// can a total order of (sortKey, height) be built to satisfy a traversal order of the tree?
 	// in-order seems the most possible.

@@ -55,7 +55,9 @@ func NewTree(sql *SqliteDb, pool *NodePool) *Tree {
 		maxWorkingSize: 2 * 1024 * 1024 * 1024,
 		lastDotGraph:   dot.NewGraph(dot.Directed),
 	}
-	tree.sql.metrics = tree.metrics
+	if tree.sql != nil {
+		tree.sql.metrics = tree.metrics
+	}
 	return tree
 }
 

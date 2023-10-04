@@ -129,6 +129,8 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 		}
 		hash, version, err = tree.SaveVersion()
 
+		fmt.Printf("version: %d, hash: %x, size: %d\n", version, hash, tree.root.size)
+
 		require.NoError(t, err)
 		if version == opts.Until {
 			break
