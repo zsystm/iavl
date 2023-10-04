@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cosmos/iavl-bench/bench"
+	"github.com/emicklei/dot"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,6 +68,10 @@ func TestMinRightToken_Gen(t *testing.T) {
 }
 
 func TestTreeSanity(t *testing.T) {
+	outDir := "/tmp/tree_viz"
+	require.NoError(t, os.RemoveAll(outDir))
+	require.NoError(t, os.Mkdir(outDir, 0755))
+
 	gen := bench.ChangesetGenerator{
 		Seed:             77,
 		KeyMean:          4,
@@ -98,6 +103,11 @@ func TestTreeSanity(t *testing.T) {
 		}
 		rehashTree(tree.root)
 		fmt.Printf("version=%d, hash=%x size=%d\n", itr.Version(), tree.root.hash, tree.root.size)
+		f, err := os.Create(fmt.Sprintf("%s/version%d.dot", outDir, itr.Version()))
+		require.NoError(t, err)
+		g := writeDotGraph(tree.root, &dot.Graph{})
+		_, err = f.Write([]byte(g.String()))
+		require.NoError(t, err)
 	}
 }
 
