@@ -127,9 +127,9 @@ func testTreeBuild(t *testing.T, tree *Tree, opts testutil.TreeBuildOptions) (cn
 			//if cnt%(sampleRate*4) == 0 {
 			//}
 		}
-		hash, version, err = tree.SaveVersion()
+		hash, version, err = tree.SaveVersionV2()
 
-		fmt.Printf("version: %d, hash: %x, size: %d\n", version, hash, tree.root.size)
+		//fmt.Printf("version: %d, hash: %x, size: %d\n", version, hash, tree.root.size)
 
 		require.NoError(t, err)
 		if version == opts.Until {

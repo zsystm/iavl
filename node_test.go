@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
+	"os"
 	"testing"
 
 	"github.com/bvinc/go-sqlite-lite/sqlite3"
@@ -74,7 +75,11 @@ func TestTreeSanity(t *testing.T) {
 		{
 			name: "sqlite",
 			treeFn: func() *Tree {
+				dir := "/tmp/tree_sanity"
+				require.NoError(t, os.RemoveAll(dir))
+				require.NoError(t, os.MkdirAll(dir, 0755))
 				pool := NewNodePool()
+
 				sql := &SqliteDb{
 					shards:       make(map[int64]*sqlite3.Stmt),
 					versionShard: make(map[int64]int64),
@@ -82,10 +87,15 @@ func TestTreeSanity(t *testing.T) {
 					pool:         pool,
 				}
 				require.NoError(t, sql.init(true))
+
+				//sql, err := NewSqliteDb(pool, dir, true)
+				//require.NoError(t, err)
+
+				require.NoError(t, sql.resetReadConn())
 				return NewTree(sql, pool)
 			},
 			hashFn: func(tree *Tree) []byte {
-				hash, _, err := tree.SaveVersion()
+				hash, _, err := tree.SaveVersionV2()
 				require.NoError(t, err)
 				return hash
 			},

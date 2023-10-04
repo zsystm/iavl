@@ -55,14 +55,11 @@ func (np *NodePool) grow(amount int) {
 func (np *NodePool) Get() *Node {
 	if np.poolId == math.MaxUint64 {
 		np.poolId = 1
-	} else {
-		np.poolId++
 	}
 	n := np.syncPool.Get().(*Node)
-	n.poolId = np.poolId
-
-	if np.poolId == 917 {
-		log.Warn().Msgf("poolId=%d", np.poolId)
+	if n.poolId == 0 {
+		n.poolId = np.poolId
+		np.poolId++
 	}
 
 	return n
@@ -88,19 +85,24 @@ func (np *NodePool) Put(node *Node) {
 }
 
 func (np *NodePool) resetNode(node *Node) {
-	node.rightNode = nil
-	node.leftNode = nil
-	node.hash = nil
 	node.key = nil
+	node.sortKey = nil
 	node.value = nil
-	node.subtreeHeight = 0
+	node.hash = nil
+	node.version = 0
 	node.size = 0
+	node.leftNode = nil
+	node.rightNode = nil
+	node.subtreeHeight = 0
+
 	node.dirty = false
 
 	node.leftLeaf = 0
 	node.rightLeaf = 0
 	node.leafSeq = 0
+
 	node.leftBranch = nil
 	node.rightBranch = nil
+
 	node.lastBranchKey = nil
 }

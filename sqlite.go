@@ -337,27 +337,27 @@ func (sql *SqliteDb) getLeaf(seq leafSeq) (*Node, error) {
 			return nil, err
 		}
 	}
-	// TODO
-	// in this poc, on read and write, avoid node.Bytes() and MakeNode, and just store data in columns.
+
 	if err = sql.queryLeaf.Bind(int(seq)); err != nil {
 		return nil, err
 	}
 	hasRow, err := sql.queryLeaf.Step()
-	if !hasRow {
-		return nil, fmt.Errorf("leaf not found: %d", seq)
-	}
 	if err != nil {
 		return nil, err
+	}
+	if !hasRow {
+		return nil, fmt.Errorf("leaf not found: %d", seq)
 	}
 
 	//log.Info().Msgf("leaf found: %d", seq)
 
-	node := sql.pool.Get()
-	err = sql.queryLeaf.Scan(&node.version, &node.key, &node.hash)
+	leaf := sql.pool.Get()
+	err = sql.queryLeaf.Scan(&leaf.version, &leaf.key, &leaf.hash)
 	if err != nil {
 		return nil, err
 	}
-	node.leafSeq = seq
+	leaf.leafSeq = seq
+	leaf.size = 1
 
 	err = sql.queryLeaf.Reset()
 	if err != nil {
@@ -370,7 +370,7 @@ func (sql *SqliteDb) getLeaf(seq leafSeq) (*Node, error) {
 	sql.queryCount++
 	sql.queryLeafCount++
 
-	return node, nil
+	return leaf, nil
 }
 
 func (sql *SqliteDb) getNode(nodeKey NodeKey, q *sqlite3.Stmt) (*Node, error) {
@@ -1078,7 +1078,6 @@ func (sql *SqliteDb) getLeftNode(node *Node) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		return node.leftNode, nil
 	} else {
 		if node.leftBranch == nil {
 			return nil, fmt.Errorf("leftBranch is nil: node.sortKey=%x, height=%d", node.sortKey, node.subtreeHeight)
@@ -1090,193 +1089,6 @@ func (sql *SqliteDb) getLeftNode(node *Node) (*Node, error) {
 	}
 
 	return node.leftNode, nil
-}
-
-type sqlSaveVersion struct {
-	sql          *SqliteDb
-	tree         *Tree
-	saveBranches bool
-	batchSize    int
-	currentBatch int
-	lastCommit   time.Time
-	branchInsert *sqlite3.Stmt
-	branchUpdate *sqlite3.Stmt
-	branchDelete *sqlite3.Stmt
-	leafInsert   *sqlite3.Stmt
-	leafUpdate   *sqlite3.Stmt
-	leafDelete   *sqlite3.Stmt
-}
-
-func newSqlSaveVersion(sql *SqliteDb, tree *Tree) (*sqlSaveVersion, error) {
-	sv := &sqlSaveVersion{
-		sql:        sql,
-		tree:       tree,
-		batchSize:  200_000,
-		lastCommit: time.Now(),
-	}
-	if err := sv.prepare(); err != nil {
-		return nil, err
-	}
-	return sv, nil
-}
-
-func (sv *sqlSaveVersion) deepSave(node *Node) (err error) {
-	if node.sortKey == nil && node.leafSeq == 0 {
-		panic("found a node with nil sortKey and leafSeq")
-	}
-	// abort traversal on clean nodes
-	if node.version < sv.tree.version {
-		return nil
-	}
-	// post-order, LRN traversal for non-leafs
-	if !node.isLeaf() {
-		if err = sv.deepSave(node.left(sv.tree)); err != nil {
-			return err
-		}
-		if err = sv.deepSave(node.right(sv.tree)); err != nil {
-			return err
-		}
-	}
-
-	// hash & save node
-	node._hash()
-	switch {
-	case node.isLeaf() && node.version >= sv.tree.version:
-		if node.leafSeq > sv.tree.lastLeafSequence {
-			if err = sv.leafInsert.Exec(int(node.leafSeq), node.version, node.key, node.hash); err != nil {
-				return fmt.Errorf("leaf seq id %d failed: %w", node.leafSeq, err)
-			}
-		} else {
-			// i may be able to skip storing/writing version to save some writes.
-			if err = sv.leafUpdate.Exec(node.key, node.version, node.hash, int(node.leafSeq)); err != nil {
-				return err
-			}
-		}
-		sv.sql.metrics.WriteLeaves++
-		sv.sql.pool.Put(node)
-	case sv.saveBranches && (node.lastBranchKey == nil || !node.lastBranchKey.Equals(node)):
-		var leftSortKey, rightSortKey []byte
-		if node.leftLeaf == 0 {
-			leftSortKey = node.leftNode.sortKey
-		}
-		if node.rightLeaf == 0 {
-			rightSortKey = node.rightNode.sortKey
-		}
-
-		if err = sv.branchInsert.Exec(
-			node.sortKey,
-			int(node.subtreeHeight),
-			node.version,
-			node.size,
-			node.key,
-			node.hash,
-			leftSortKey,
-			rightSortKey,
-			int(node.leftLeaf),
-			int(node.rightLeaf),
-		); err != nil {
-			return err
-		}
-	case sv.saveBranches:
-		// TODO
-		panic("not implemented")
-
-	default:
-		//log.Warn().Msgf("nothing to do for node isLeaf=%t, saveBranches=%t", node.isLeaf(), sv.saveBranches)
-		// not saving branches
-	}
-	sv.currentBatch++
-	if sv.currentBatch%sv.batchSize == 0 {
-		log.Info().Msgf("i=%s dur=%s rate=%s",
-			humanize.Comma(int64(sv.currentBatch)),
-			time.Since(sv.lastCommit).Round(time.Millisecond),
-			humanize.Comma(int64(float64(sv.batchSize)/time.Since(sv.lastCommit).Seconds())))
-
-		if err = sv.commit(); err != nil {
-			return err
-		}
-		if err = sv.prepare(); err != nil {
-			return err
-		}
-		sv.lastCommit = time.Now()
-	}
-
-	if node.leftLeaf != 0 {
-		node.leftNode = nil
-	}
-	if node.rightLeaf != 0 {
-		node.rightNode = nil
-	}
-
-	return nil
-}
-
-func (sv *sqlSaveVersion) prepare() (err error) {
-	if err = sv.sql.write.Begin(); err != nil {
-		return err
-	}
-
-	sv.branchInsert, err = sv.sql.write.Prepare("INSERT INTO branch (sort_key, s_height, version, size, key, hash, left_sort_key, right_sort_key, left_leaf_seq, right_leaf_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	sv.branchUpdate, err = sv.sql.write.Prepare("UPDATE branch SET sort_key = ?, s_height = ?, version = ?, key = ?, hash = ?, left_sort_key = ?, right_sort_key = ?, left_s_height = ?, right_s_height = ?, left_leaf_seq = ?, right_leaf_seq = ? WHERE sort_key = ? AND s_height = ?")
-	if err != nil {
-		return err
-	}
-	sv.branchDelete, err = sv.sql.write.Prepare("DELETE FROM branch WHERE sort_key = ? AND s_height = ?")
-	if err != nil {
-		return err
-	}
-
-	sv.leafInsert, err = sv.sql.write.Prepare("INSERT INTO leaf (seq, version, key, hash) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	sv.leafUpdate, err = sv.sql.write.Prepare("UPDATE leaf SET version = ?, key = ?, hash = ? WHERE seq = ?")
-	if err != nil {
-		return err
-	}
-	sv.leafDelete, err = sv.sql.write.Prepare("DELETE FROM leaf WHERE seq = ?")
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (sv *sqlSaveVersion) commit() error {
-	if err := sv.sql.write.Commit(); err != nil {
-		return err
-	}
-	if err := sv.branchInsert.Close(); err != nil {
-		return err
-	}
-	if err := sv.branchUpdate.Close(); err != nil {
-		return err
-	}
-	if err := sv.branchDelete.Close(); err != nil {
-		return err
-	}
-	if err := sv.leafInsert.Close(); err != nil {
-		return err
-	}
-	if err := sv.leafUpdate.Close(); err != nil {
-		return err
-	}
-	if err := sv.leafDelete.Close(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (sv *sqlSaveVersion) finish() error {
-	if err := sv.commit(); err != nil {
-		return err
-	}
-	if err := sv.sql.write.Exec("PRAGMA wal_checkpoint(RESTART);"); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (sql *SqliteDb) getLastLeafSeq() (leafSeq, error) {

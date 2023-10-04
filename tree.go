@@ -166,14 +166,52 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 
 func (tree *Tree) SaveVersionV2() ([]byte, int64, error) {
 	tree.version++
-	tree.deepHash(tree.root)
+	sqlSave, err := newSqlSaveVersion(tree.sql, tree)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err = sqlSave.deepSaveV2(tree.root); err != nil {
+		return nil, 0, err
+	}
+
+	writeStart := time.Now()
+	if err = sqlSave.upsert(); err != nil {
+		return nil, 0, err
+	}
+	if err = sqlSave.finish(); err != nil {
+		return nil, 0, err
+	}
+	dur := time.Since(writeStart)
+	tree.metrics.WriteTime += dur
+	tree.metrics.WriteLeaves += int64(sqlSave.currentBatch)
+
+	tree.lastLeafSequence = tree.leafSequence
+	tree.orphans = nil
+
 	return tree.root.hash, tree.version, nil
 }
 
 func (tree *Tree) deepHash(node *Node) {
-	//if node.version != tree.version {
-	//	return
-	//}
+	// invariants
+	if node.isLeaf() {
+		if node.hash == nil {
+			panic("leaf hash is nil")
+		}
+		if node.leftNode != nil || node.rightNode != nil {
+			panic("leaf has children")
+		}
+		if node.leafSeq == 0 {
+			panic("leaf has leafSeq 0")
+		}
+	} else {
+		if node.leafSeq != 0 {
+			panic("branch has leafSeq != 0")
+		}
+	}
+
+	if node.isLeaf() || node.version != tree.version {
+		return
+	}
 	if !node.isLeaf() {
 		tree.deepHash(node.left(tree))
 		tree.deepHash(node.right(tree))
