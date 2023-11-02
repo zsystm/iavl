@@ -31,13 +31,14 @@ type ExportNode struct {
 // depth-first post-order (LRN), this order must be preserved when importing in order to recreate
 // the same tree structure.
 type Exporter struct {
-	tree   *ImmutableTree
-	ch     chan *ExportNode
-	cancel context.CancelFunc
+	tree      *ImmutableTree
+	ch        chan *ExportNode
+	cancel    context.CancelFunc
+	postOrder bool
 }
 
 // NewExporter creates a new Exporter. Callers must call Close() when done.
-func newExporter(tree *ImmutableTree) (*Exporter, error) {
+func newExporter(tree *ImmutableTree, postOrder bool) (*Exporter, error) {
 	if tree == nil {
 		return nil, fmt.Errorf("tree is nil: %w", ErrNotInitalizedTree)
 	}
@@ -48,9 +49,10 @@ func newExporter(tree *ImmutableTree) (*Exporter, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	exporter := &Exporter{
-		tree:   tree,
-		ch:     make(chan *ExportNode, exportBufferSize),
-		cancel: cancel,
+		tree:      tree,
+		ch:        make(chan *ExportNode, exportBufferSize),
+		cancel:    cancel,
+		postOrder: postOrder,
 	}
 
 	tree.ndb.incrVersionReaders(tree.version)
@@ -61,7 +63,14 @@ func newExporter(tree *ImmutableTree) (*Exporter, error) {
 
 // export exports nodes
 func (e *Exporter) export(ctx context.Context) {
-	e.tree.root.traversePost(e.tree, true, func(node *Node) bool {
+	var traverseFn func(tree *ImmutableTree, ascending bool, fn func(*Node) bool) bool
+	if e.postOrder {
+		traverseFn = e.tree.root.traversePost
+	} else {
+		traverseFn = e.tree.root.traverse
+	}
+
+	traverseFn(e.tree, true, func(node *Node) bool {
 		exportNode := &ExportNode{
 			Key:     node.key,
 			Value:   node.value,
