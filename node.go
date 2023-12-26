@@ -31,6 +31,9 @@ type NodeKey struct {
 	nonce   uint32
 }
 
+// sentinel node key to represent a single child node
+var sentinelSingleChildNodeKey = &NodeKey{version: -1234567890123}
+
 // GetKey returns a byte slice of the NodeKey.
 func (nk *NodeKey) GetKey() []byte {
 	b := make([]byte, 12)
@@ -339,7 +342,7 @@ func (node *Node) cloneNoChildFetch(tree *MutableTree) (*Node, error) {
 		subtreeHeight: node.subtreeHeight,
 		size:          node.size,
 		hash:          nil,
-		nodeKey:       nil,
+		nodeKey:       sentinelSingleChildNodeKey,
 		leftNode:      leftNode,
 		rightNode:     rightNode,
 		leftNodeKey:   node.leftNodeKey,

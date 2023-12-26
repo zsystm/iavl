@@ -382,6 +382,7 @@ func (tree *MutableTree) recursiveSetLegacy(node *Node, key []byte, value []byte
 		return node, updated, nil
 	}
 	node.fetchOneChild(tree, !recurseLeft)
+	node.nodeKey = nil
 
 	err = node.calcHeightAndSize(tree.ImmutableTree)
 	if err != nil {
@@ -1101,7 +1102,8 @@ func (tree *MutableTree) saveNewNodes(version int64) error {
 	newNodes := make([]*Node, 0)
 	var recursiveAssignKey func(*Node) ([]byte, error)
 	recursiveAssignKey = func(node *Node) ([]byte, error) {
-		if node.nodeKey != nil {
+		isSingleChildFetched := node.nodeKey == sentinelSingleChildNodeKey
+		if node.nodeKey != nil && !isSingleChildFetched {
 			if node.nodeKey.nonce != 0 {
 				return node.nodeKey.GetKey(), nil
 			}
@@ -1116,13 +1118,18 @@ func (tree *MutableTree) saveNewNodes(version int64) error {
 		var err error
 		// the inner nodes should have two children.
 		if node.subtreeHeight > 0 {
-			node.leftNodeKey, err = recursiveAssignKey(node.leftNode)
-			if err != nil {
-				return nil, err
+			// if singleChildFetched, we can skip the node that is nil
+			if !isSingleChildFetched || node.leftNode != nil {
+				node.leftNodeKey, err = recursiveAssignKey(node.leftNode)
+				if err != nil {
+					return nil, err
+				}
 			}
-			node.rightNodeKey, err = recursiveAssignKey(node.rightNode)
-			if err != nil {
-				return nil, err
+			if !isSingleChildFetched || node.rightNode != nil {
+				node.rightNodeKey, err = recursiveAssignKey(node.rightNode)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 
