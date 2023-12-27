@@ -883,8 +883,11 @@ func (tree *MutableTree) SetInitialVersion(version uint64) {
 // An error is returned if any single version has active readers.
 // All writes happen in a single batch with a single commit.
 func (tree *MutableTree) DeleteVersionsTo(toVersion int64) error {
-	if err := tree.ndb.DeleteVersionsTo(toVersion); err != nil {
-		return err
+	errCh := tree.ndb.DeleteVersionsTo(toVersion)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
 	}
 
 	return tree.ndb.Commit()

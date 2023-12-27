@@ -600,53 +600,64 @@ func (ndb *nodeDB) DeleteVersionsFrom(fromVersion int64) error {
 }
 
 // DeleteVersionsTo deletes the oldest versions up to the given version from disk.
-func (ndb *nodeDB) DeleteVersionsTo(toVersion int64) error {
-	legacyLatestVersion, err := ndb.getLegacyLatestVersion()
-	if err != nil {
-		return err
-	}
-	// If the legacy version is greater than the toVersion, we don't need to delete anything.
-	// It will delete the legacy versions at once.
-	if legacyLatestVersion > toVersion {
-		return nil
-	}
+func (ndb *nodeDB) DeleteVersionsTo(toVersion int64) <-chan error {
+	errCh := make(chan error, 1)
 
-	first, err := ndb.getFirstVersion()
-	if err != nil {
-		return err
-	}
+	go func() {
+		defer close(errCh)
 
-	latest, err := ndb.getLatestVersion()
-	if err != nil {
-		return err
-	}
-
-	if latest <= toVersion {
-		return fmt.Errorf("the version should be smaller than the latest version %d", latest)
-	}
-
-	for v, r := range ndb.versionReaders {
-		if v >= first && v <= toVersion && r != 0 {
-			return fmt.Errorf("unable to delete version %v with %v active readers", v, r)
+		legacyLatestVersion, err := ndb.getLegacyLatestVersion()
+		if err != nil {
+			errCh <- err
+			return
 		}
-	}
 
-	// Delete the legacy versions
-	if legacyLatestVersion >= first {
-		if err := ndb.deleteLegacyVersions(); err != nil {
-			return err
+		if legacyLatestVersion > toVersion {
+			return
 		}
-		first = legacyLatestVersion + 1
-	}
 
-	for version := first; version <= toVersion; version++ {
-		if err := ndb.deleteVersion(version); err != nil {
-			return err
+		first, err := ndb.getFirstVersion()
+		if err != nil {
+			errCh <- err
+			return
 		}
-		ndb.resetFirstVersion(version + 1)
-	}
 
-	return nil
+		latest, err := ndb.getLatestVersion()
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		if latest <= toVersion {
+			errCh <- fmt.Errorf("the version should be smaller than the latest version %d", latest)
+			return
+		}
+
+		for v, r := range ndb.versionReaders {
+			if v >= first && v <= toVersion && r != 0 {
+				errCh <- fmt.Errorf("unable to delete version %v with %v active readers", v, r)
+				return
+			}
+		}
+
+		if legacyLatestVersion >= first {
+			if err := ndb.deleteLegacyVersions(); err != nil {
+				errCh <- err
+				return
+			}
+			first = legacyLatestVersion + 1
+		}
+
+		for version := first; version <= toVersion; version++ {
+			if err := ndb.deleteVersion(version); err != nil {
+				errCh <- err
+				return
+			}
+			ndb.resetFirstVersion(version + 1)
+		}
+	}()
+
+	return errCh
 }
 
 func (ndb *nodeDB) DeleteFastNode(key []byte) error {
