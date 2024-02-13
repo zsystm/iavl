@@ -247,65 +247,73 @@ func (tree *Tree) computeHash() []byte {
 	return tree.root.hash
 }
 
-func (tree *Tree) deepHash(node *Node) (isLeaf bool, isDirty bool) {
+func (tree *Tree) deepHash(node *Node) {
 	if node == nil {
 		panic(fmt.Sprintf("node is nil; sql.path=%s", tree.sql.opts.Path))
 	}
-	isLeaf = node.isLeaf()
-
 	// new leaves are written every version
 	if node.nodeKey.Version() == tree.version {
-		isDirty = true
-		if isLeaf {
+		if node.isLeaf() {
 			tree.leaves = append(tree.leaves, node)
 		}
 	}
 
 	// always end recursion at a leaf
-	if isLeaf {
-		return true, isDirty
+	if node.isLeaf() {
+		return
+	}
+
+	if node.hash == nil {
+		// When the child is a leaf, this will initiate a leafRead from storage for the sole purpose of producing a hash.
+		// Recall that a terminal tree node may have only updated one leaf this version.
+		// We can explore storing right/left hash in terminal tree nodes to avoid this, or changing the storage
+		// format to iavl v0 where left/right hash are stored in the node.
+		tree.deepHash(node.left(tree))
+		tree.deepHash(node.right(tree))
 	}
 
 	if !tree.shouldCheckpoint {
 		// when not checkpointing, end recursion at a node with a hash (node.version < tree.version)
 		if node.hash != nil {
-			return false, isDirty
+			return
 		}
 	} else {
 		// when checkpointing end recursion at path where node.version <= tree.lastCheckpoint
-		// and accumulate tree node into tree.branches
 		if node.nodeKey.Version() <= tree.lastCheckpoint {
-			return isLeaf, isDirty
+			return
 		}
+		// otherwise accumulate the node into the checkpoint batch
 		tree.branches = append(tree.branches, node)
-	}
 
-	// When reading leaves, this will initiate a leafRead from storage for the sole purpose of producing a hash.
-	// Recall that a terminal tree node may have only updated one leaf this version.
-	// We can explore storing right/left hash in terminal tree nodes to avoid this, or changing the storage
-	// format to iavl v0 where left/right hash are stored in the node.
-	leftIsLeaf, leftisDirty := tree.deepHash(node.left(tree))
-	rightIsLeaf, rightIsDirty := tree.deepHash(node.right(tree))
+		if node.hash != nil {
+			if node.leftNode != nil {
+				tree.deepHash(node.leftNode)
+			}
+			if node.rightNode != nil {
+				tree.deepHash(node.rightNode)
+			}
+		}
+	}
 
 	node._hash()
 
+	// when heightFilter > 0 remove the leaf nodes from memory.
+	// if the leaf node is not dirty, return it to the pool.
+	// if the leaf node is dirty, it will be written to storage then removed from the pool.
 	if tree.heightFilter > 0 {
-		// will be returned to the pool in BatchSet if not below
-		if leftIsLeaf {
-			if !leftisDirty {
+		if node.leftNode != nil && node.leftNode.isLeaf() {
+			if !node.leftNode.dirty {
 				tree.pool.Put(node.leftNode)
 			}
 			node.leftNode = nil
 		}
-		if rightIsLeaf {
-			if !rightIsDirty {
+		if node.rightNode != nil && node.rightNode.isLeaf() {
+			if !node.rightNode.dirty {
 				tree.pool.Put(node.rightNode)
 			}
 			node.rightNode = nil
 		}
 	}
-
-	return false, isDirty
 }
 
 func (tree *Tree) Get(key []byte) ([]byte, error) {
