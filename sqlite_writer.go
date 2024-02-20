@@ -16,7 +16,7 @@ type pruneSignal struct {
 }
 
 type saveSignal struct {
-	batch          *sqliteBatch
+	batch          *SqliteBatch
 	root           *Node
 	version        int64
 	wantCheckpoint bool
@@ -430,7 +430,7 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 func (w *sqlWriter) saveTree(tree *Tree) error {
 	saveStart := time.Now()
 
-	batch := &sqliteBatch{
+	batch := &SqliteBatch{
 		sql:  tree.sql,
 		tree: tree,
 		size: 200_000,

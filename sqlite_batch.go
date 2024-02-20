@@ -9,11 +9,17 @@ import (
 	"github.com/rs/zerolog"
 )
 
-type sqliteBatch struct {
-	tree   *Tree
-	sql    *SqliteDb
-	size   int64
-	logger zerolog.Logger
+type SqliteBatch struct {
+	sql           *SqliteDb
+	version       int64
+	size          int64
+	logger        zerolog.Logger
+	treeOpts      *TreeOptions
+	branches      []*Node
+	leaves        []*Node
+	deletes       []*NodeDelete
+	branchOrphans []NodeKey
+	leafOrphans   []NodeKey
 
 	treeCount int64
 	treeSince time.Time
@@ -29,7 +35,20 @@ type sqliteBatch struct {
 	treeOrphan   *sqlite3.Stmt
 }
 
-func (b *sqliteBatch) newChangeLogBatch() (err error) {
+func NewSQLiteBatch(
+	sql *SqliteDb,
+	version int64,
+	size int64,
+	logger zerolog.Logger) *SqliteBatch {
+	return &SqliteBatch{
+		sql:     sql,
+		version: version,
+		size:    size,
+		logger:  logger,
+	}
+}
+
+func (b *SqliteBatch) newChangeLogBatch() (err error) {
 	if err = b.sql.leafWrite.Begin(); err != nil {
 		return err
 	}
@@ -57,7 +76,7 @@ func (b *sqliteBatch) newChangeLogBatch() (err error) {
 	return nil
 }
 
-func (b *sqliteBatch) changelogMaybeCommit() (err error) {
+func (b *SqliteBatch) changelogMaybeCommit() (err error) {
 	if b.leafCount%b.size == 0 {
 		if err = b.changelogBatchCommit(); err != nil {
 			return err
@@ -69,7 +88,7 @@ func (b *sqliteBatch) changelogMaybeCommit() (err error) {
 	return nil
 }
 
-func (b *sqliteBatch) changelogBatchCommit() error {
+func (b *SqliteBatch) changelogBatchCommit() error {
 	if err := b.sql.leafWrite.Commit(); err != nil {
 		return err
 	}
@@ -92,11 +111,11 @@ func (b *sqliteBatch) changelogBatchCommit() error {
 	return nil
 }
 
-func (b *sqliteBatch) execBranchOrphan(nodeKey NodeKey) error {
-	return b.treeOrphan.Exec(nodeKey.Version(), int(nodeKey.Sequence()), b.tree.version)
+func (b *SqliteBatch) execBranchOrphan(nodeKey NodeKey) error {
+	return b.treeOrphan.Exec(nodeKey.Version(), int(nodeKey.Sequence()), b.version)
 }
 
-func (b *sqliteBatch) newTreeBatch(checkpointVersion int64) (err error) {
+func (b *SqliteBatch) newTreeBatch(checkpointVersion int64) (err error) {
 	if err = b.sql.treeWrite.Begin(); err != nil {
 		return err
 	}
@@ -110,7 +129,7 @@ func (b *sqliteBatch) newTreeBatch(checkpointVersion int64) (err error) {
 	return err
 }
 
-func (b *sqliteBatch) treeBatchCommit() error {
+func (b *SqliteBatch) treeBatchCommit() error {
 	if err := b.sql.treeWrite.Commit(); err != nil {
 		return err
 	}
@@ -135,7 +154,7 @@ func (b *sqliteBatch) treeBatchCommit() error {
 	return nil
 }
 
-func (b *sqliteBatch) treeMaybeCommit(checkpointVersion int64) (err error) {
+func (b *SqliteBatch) treeMaybeCommit(checkpointVersion int64) (err error) {
 	if b.treeCount%b.size == 0 {
 		if err = b.treeBatchCommit(); err != nil {
 			return err
@@ -147,7 +166,7 @@ func (b *sqliteBatch) treeMaybeCommit(checkpointVersion int64) (err error) {
 	return nil
 }
 
-func (b *sqliteBatch) saveLeaves() (int64, error) {
+func (b *SqliteBatch) saveLeaves() (int64, error) {
 	var byteCount int64
 
 	err := b.newChangeLogBatch()
@@ -156,13 +175,12 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	}
 
 	var (
-		bz   []byte
-		val  []byte
-		tree = b.tree
+		bz  []byte
+		val []byte
 	)
-	for i, leaf := range tree.leaves {
+	for i, leaf := range b.leaves {
 		b.leafCount++
-		if tree.storeLatestLeaves {
+		if b.tree.storeLatestLeaves {
 			val = leaf.value
 			leaf.value = nil
 		}
@@ -174,7 +192,7 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), bz); err != nil {
 			return 0, err
 		}
-		if tree.storeLatestLeaves {
+		if b.tree.storeLatestLeaves {
 			if err = b.latestInsert.Exec(leaf.key, val); err != nil {
 				return 0, err
 			}
@@ -182,13 +200,13 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		if err = b.changelogMaybeCommit(); err != nil {
 			return 0, err
 		}
-		if tree.heightFilter > 0 {
+		if b.tree.heightFilter > 0 {
 			if i != 0 {
 				// evict leaf
-				tree.returnNode(leaf)
-			} else if leaf.nodeKey != tree.root.nodeKey {
+				b.tree.returnNode(leaf)
+			} else if leaf.nodeKey != b.tree.root.nodeKey {
 				// never evict the root if it's a leaf
-				tree.returnNode(leaf)
+				b.tree.returnNode(leaf)
 			}
 		}
 	}
@@ -232,11 +250,11 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	return byteCount, nil
 }
 
-func (b *sqliteBatch) isCheckpoint() bool {
+func (b *SqliteBatch) isCheckpoint() bool {
 	return len(b.tree.branches) > 0
 }
 
-func (b *sqliteBatch) saveBranches() (n int64, err error) {
+func (b *SqliteBatch) saveBranches() (n int64, err error) {
 	if b.isCheckpoint() {
 		tree := b.tree
 		b.treeCount = 0

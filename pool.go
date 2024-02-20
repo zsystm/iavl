@@ -44,8 +44,8 @@ func (np *NodePool) Put(node *Node) {
 	node.leftNode = nil
 	node.nodeKey = emptyNodeKey
 	node.hash = nil
-	node.key = nil
-	node.value = nil
+	node.Key = nil
+	node.Value = nil
 	node.subtreeHeight = 0
 	node.size = 0
 	node.dirty = false

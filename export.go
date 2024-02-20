@@ -88,8 +88,8 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			return nil, ErrorExportDone
 		}
 		return &SnapshotNode{
-			Key:     node.key,
-			Value:   node.value,
+			Key:     node.Key,
+			Value:   node.Value,
 			Version: node.nodeKey.Version(),
 			Height:  node.subtreeHeight,
 		}, nil

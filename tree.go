@@ -18,11 +18,24 @@ var log = zlog.Output(zerolog.ConsoleWriter{
 	TimeFormat: time.Stamp,
 })
 
-type nodeDelete struct {
-	// the sequence in which this deletion was processed
-	deleteKey NodeKey
-	// the leaf key to delete in `latest` table (if maintained)
-	leafKey []byte
+type TreeOptions struct {
+	CheckpointInterval int64
+	CheckpointMemory   uint64
+	HeightFilter       int8
+	EvictionDepth      int8
+	MetricsProxy       metrics.Proxy
+	StoreLeafValues    bool
+	StoreLatestLeaves  bool
+}
+
+func DefaultTreeOptions() *TreeOptions {
+	return &TreeOptions{
+		CheckpointInterval: 1000,
+		StoreLeafValues:    true,
+		StoreLatestLeaves:  false,
+		HeightFilter:       1,
+		EvictionDepth:      -1,
+	}
 }
 
 type Tree struct {
@@ -38,61 +51,33 @@ type Tree struct {
 	shouldCheckpoint bool
 
 	// options
-	maxWorkingSize     uint64
-	workingBytes       uint64
-	checkpointInterval int64
-	checkpointMemory   uint64
-	workingSize        int64
-	storeLeafValues    bool
-	storeLatestLeaves  bool
-	heightFilter       int8
-	metricsProxy       metrics.Proxy
+	options        *TreeOptions
+	maxWorkingSize uint64
+	workingBytes   uint64
+	workingSize    int64
 
 	// state
 	branches      []*Node
 	leaves        []*Node
 	branchOrphans []NodeKey
 	leafOrphans   []NodeKey
-	deletes       []*nodeDelete
+	deletes       []*NodeDelete
 	sequence      uint32
 	isReplaying   bool
 	evictionDepth int8
 }
 
-type TreeOptions struct {
-	CheckpointInterval int64
-	CheckpointMemory   uint64
-	StateStorage       bool
-	HeightFilter       int8
-	EvictionDepth      int8
-	MetricsProxy       metrics.Proxy
-}
-
-func DefaultTreeOptions() TreeOptions {
-	return TreeOptions{
-		CheckpointInterval: 1000,
-		StateStorage:       true,
-		HeightFilter:       1,
-		EvictionDepth:      -1,
-	}
-}
-
-func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
+func NewTree(sql *SqliteDb, pool *NodePool, opts *TreeOptions) *Tree {
 	ctx, cancel := context.WithCancel(context.Background())
+
 	tree := &Tree{
-		sql:                sql,
-		sqlWriter:          sql.newSqlWriter(),
-		writerCancel:       cancel,
-		pool:               pool,
-		metrics:            &metrics.TreeMetrics{},
-		maxWorkingSize:     1.5 * 1024 * 1024 * 1024,
-		checkpointInterval: opts.CheckpointInterval,
-		checkpointMemory:   opts.CheckpointMemory,
-		storeLeafValues:    opts.StateStorage,
-		storeLatestLeaves:  false,
-		heightFilter:       opts.HeightFilter,
-		metricsProxy:       opts.MetricsProxy,
-		evictionDepth:      opts.EvictionDepth,
+		sql:            sql,
+		sqlWriter:      sql.newSqlWriter(),
+		writerCancel:   cancel,
+		pool:           pool,
+		metrics:        &metrics.TreeMetrics{},
+		maxWorkingSize: 1.5 * 1024 * 1024 * 1024,
+		options:        opts,
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -172,8 +157,8 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 
 	if !tree.shouldCheckpoint {
 		tree.shouldCheckpoint = tree.version == 1 ||
-			(tree.checkpointInterval > 0 && tree.version-tree.lastCheckpoint >= tree.checkpointInterval) ||
-			(tree.checkpointMemory > 0 && tree.workingBytes >= tree.checkpointMemory)
+			(tree.options.CheckpointInterval > 0 && tree.version-tree.lastCheckpoint >= tree.options.CheckpointInterval) ||
+			(tree.options.CheckpointMemory > 0 && tree.workingBytes >= tree.options.CheckpointMemory)
 	}
 	rootHash := tree.computeHash()
 
@@ -263,7 +248,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 	// when heightFilter > 0 remove the leaf nodes from memory.
 	// if the leaf node is not dirty, return it to the pool.
 	// if the leaf node is dirty, it will be written to storage then removed from the pool.
-	if tree.heightFilter > 0 {
+	if tree.options.HeightFilter > 0 {
 		if node.leftNode != nil && node.leftNode.isLeaf() {
 			if !node.leftNode.dirty {
 				tree.returnNode(node.leftNode)
@@ -287,14 +272,14 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 }
 
 func (tree *Tree) Get(key []byte) ([]byte, error) {
-	if tree.metricsProxy != nil {
-		defer tree.metricsProxy.MeasureSince(time.Now(), "iavl_v2", "get")
+	if tree.options.MetricsProxy != nil {
+		defer tree.options.MetricsProxy.MeasureSince(time.Now(), "iavl_v2", "get")
 	}
 	var (
 		res []byte
 		err error
 	)
-	if tree.storeLatestLeaves {
+	if tree.options.StoreLatestLeaves {
 		res, err = tree.sql.GetLatestLeaf(key)
 	} else {
 		if tree.root == nil {
@@ -306,14 +291,14 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 }
 
 func (tree *Tree) Has(key []byte) (bool, error) {
-	if tree.metricsProxy != nil {
-		defer tree.metricsProxy.MeasureSince(time.Now(), "iavl_v2", "has")
+	if tree.options.MetricsProxy != nil {
+		defer tree.options.MetricsProxy.MeasureSince(time.Now(), "iavl_v2", "has")
 	}
 	var (
 		err error
 		val []byte
 	)
-	if tree.storeLatestLeaves {
+	if tree.options.StoreLatestLeaves {
 		val, err = tree.sql.GetLatestLeaf(key)
 	} else {
 		if tree.root == nil {
@@ -332,8 +317,8 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 // to slices stored within IAVL. It returns true when an existing value was
 // updated, while false means it was a new key.
 func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
-	if tree.metricsProxy != nil {
-		defer tree.metricsProxy.MeasureSince(time.Now(), "iavl_v2", "set")
+	if tree.options.MetricsProxy != nil {
+		defer tree.options.MetricsProxy.MeasureSince(time.Now(), "iavl_v2", "set")
 	}
 	//tree.sql.logger.Debug().Msgf("set key=%x value=%x", key, value)
 	updated, err = tree.set(key, value)
@@ -369,12 +354,12 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		panic("node is nil")
 	}
 	if node.isLeaf() {
-		switch bytes.Compare(key, node.key) {
+		switch bytes.Compare(key, node.Key) {
 		case -1: // setKey < leafKey
 			tree.metrics.PoolGet += 2
 			parent := tree.pool.Get()
 			parent.nodeKey = tree.nextNodeKey()
-			parent.key = node.key
+			parent.Key = node.Key
 			parent.subtreeHeight = 1
 			parent.size = 2
 			parent.dirty = true
@@ -388,7 +373,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			tree.metrics.PoolGet += 2
 			parent := tree.pool.Get()
 			parent.nodeKey = tree.nextNodeKey()
-			parent.key = key
+			parent.Key = key
 			parent.subtreeHeight = 1
 			parent.size = 2
 			parent.dirty = true
@@ -408,10 +393,10 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 				if wasDirty {
 					tree.workingBytes -= node.sizeBytes()
 				}
-				node.value = value
+				node.Value = value
 				node._hash()
-				if !tree.storeLeafValues {
-					node.value = nil
+				if !tree.options.StoreLeafValues {
+					node.Value = nil
 				}
 				tree.workingBytes += node.sizeBytes()
 			}
@@ -423,7 +408,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		tree.mutateNode(node)
 
 		var child *Node
-		if bytes.Compare(key, node.key) < 0 {
+		if bytes.Compare(key, node.Key) < 0 {
 			child, updated, err = tree.recursiveSet(node.left(tree), key, value)
 			if err != nil {
 				return nil, updated, err
@@ -455,8 +440,8 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 // Remove removes a key from the working tree. The given key byte slice should not be modified
 // after this call, since it may point to data stored inside IAVL.
 func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
-	if tree.metricsProxy != nil {
-		tree.metricsProxy.MeasureSince(time.Now(), "iavL_v2", "remove")
+	if tree.options.MetricsProxy != nil {
+		tree.options.MetricsProxy.MeasureSince(time.Now(), "iavL_v2", "remove")
 	}
 	//tree.sql.logger.Debug().Msgf("delete key=%x", key)
 
@@ -485,11 +470,11 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 // - the removed value
 func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey []byte, newValue []byte, removed bool, err error) {
 	if node.isLeaf() {
-		if bytes.Equal(key, node.key) {
+		if bytes.Equal(key, node.Key) {
 			// we don't create an orphan here because the leaf node is removed
 			tree.addDelete(node)
 			tree.returnNode(node)
-			return nil, nil, node.value, true, nil
+			return nil, nil, node.Value, true, nil
 		}
 		return node, nil, nil, false, nil
 	}
@@ -499,7 +484,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 	}
 
 	// node.key < key; we go to the left to find the key:
-	if bytes.Compare(key, node.key) < 0 {
+	if bytes.Compare(key, node.Key) < 0 {
 		newLeftNode, newKey, value, removed, err := tree.recursiveRemove(node.left(tree), key)
 		if err != nil {
 			return nil, nil, nil, false, err
@@ -515,7 +500,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 		// collapse `node.rightNode` into `node`
 		if newLeftNode == nil {
 			right := node.right(tree)
-			k := node.key
+			k := node.Key
 			tree.returnNode(node)
 			return right, k, value, removed, nil
 		}
@@ -558,7 +543,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 
 	node.setRight(newRightNode)
 	if newKey != nil {
-		node.key = newKey
+		node.Key = newKey
 	}
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
@@ -626,9 +611,9 @@ func (tree *Tree) addDelete(node *Node) {
 	if node.nodeKey.Version() == tree.version+1 {
 		return
 	}
-	del := &nodeDelete{
-		deleteKey: tree.nextNodeKey(),
-		leafKey:   node.key,
+	del := &NodeDelete{
+		DeleteKey: tree.nextNodeKey(),
+		LeafKey:   node.Key,
 	}
 	tree.deletes = append(tree.deletes, del)
 }
@@ -639,17 +624,17 @@ func (tree *Tree) NewNode(key []byte, value []byte) *Node {
 
 	node.nodeKey = tree.nextNodeKey()
 
-	node.key = key
+	node.Key = key
 	node.subtreeHeight = 0
 	node.size = 1
 
 	if tree.isReplaying {
 		node.hash = value
 	} else {
-		node.value = value
+		node.Value = value
 		node._hash()
-		if !tree.storeLeafValues {
-			node.value = nil
+		if !tree.options.StoreLeafValues {
+			node.Value = nil
 		}
 	}
 

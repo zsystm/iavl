@@ -912,7 +912,7 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64) error {
 			if err != nil {
 				return err
 			}
-			if _, err = tree.Set(node.key, node.hash); err != nil {
+			if _, err = tree.Set(node.Key, node.hash); err != nil {
 				return err
 			}
 			//if sequence != int(tree.sequence) {
@@ -1001,7 +1001,7 @@ func (sql *SqliteDb) WriteLatestLeaves(tree *Tree) (err error) {
 
 	step = func(node *Node) error {
 		if node.isLeaf() {
-			err := latestInsert.Exec(node.key, node.value)
+			err := latestInsert.Exec(node.Key, node.Value)
 			if err != nil {
 				return err
 			}

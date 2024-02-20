@@ -48,8 +48,8 @@ func (nk NodeKey) IsEmpty() bool {
 
 // Node represents a node in a Tree.
 type Node struct {
-	key           []byte
-	value         []byte
+	Key           []byte
+	Value         []byte
 	hash          []byte
 	nodeKey       NodeKey
 	leftNodeKey   NodeKey
@@ -62,6 +62,13 @@ type Node struct {
 	dirty  bool
 	evict  bool
 	poolId uint64
+}
+
+type NodeDelete struct {
+	// the sequence in which this deletion was processed
+	DeleteKey NodeKey
+	// the leaf key to delete in `latest` table (if maintained)
+	LeafKey []byte
 }
 
 func (node *Node) String() string {
@@ -297,17 +304,17 @@ func (tree *Tree) rotateLeft(node *Node) (*Node, error) {
 
 func (node *Node) get(t *Tree, key []byte) (index int64, value []byte, err error) {
 	if node.isLeaf() {
-		switch bytes.Compare(node.key, key) {
+		switch bytes.Compare(node.Key, key) {
 		case -1:
 			return 1, nil, nil
 		case 1:
 			return 0, nil, nil
 		default:
-			return 0, node.value, nil
+			return 0, node.Value, nil
 		}
 	}
 
-	if bytes.Compare(key, node.key) < 0 {
+	if bytes.Compare(key, node.Key) < 0 {
 		leftNode, err := node.getLeftNode(t)
 		if err != nil {
 			return 0, nil, err
@@ -377,13 +384,13 @@ func (node *Node) writeHashBytes(w io.Writer) error {
 	}
 
 	if node.isLeaf() {
-		if err := EncodeBytes(w, node.key); err != nil {
+		if err := EncodeBytes(w, node.Key); err != nil {
 			return fmt.Errorf("writing key, %w", err)
 		}
 
 		// Indirection needed to provide proofs without values.
 		// (e.g. ProofLeafNode.ValueHash)
-		valueHash := sha256.Sum256(node.value)
+		valueHash := sha256.Sum256(node.Value)
 
 		if err := EncodeBytes(w, valueHash[:]); err != nil {
 			return fmt.Errorf("writing value, %w", err)
@@ -444,7 +451,7 @@ func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 	node.subtreeHeight = int8(height)
 	node.nodeKey = nodeKey
 	node.size = size
-	node.key = key
+	node.Key = key
 	node.hash = hash
 
 	if node.isLeaf() {
@@ -452,7 +459,7 @@ func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 		if cause != nil {
 			return nil, fmt.Errorf("decoding node.value, %w", cause)
 		}
-		node.value = val
+		node.Value = val
 	} else {
 		leftNodeKey, n, err := encoding.DecodeBytes(buf)
 		if err != nil {
@@ -487,7 +494,7 @@ func (node *Node) WriteBytes(w io.Writer) error {
 		return fmt.Errorf("writing size; %w", cause)
 	}
 
-	cause = encoding.EncodeBytes(w, node.key)
+	cause = encoding.EncodeBytes(w, node.Key)
 	if cause != nil {
 		return fmt.Errorf("writing key; %w", cause)
 	}
@@ -501,7 +508,7 @@ func (node *Node) WriteBytes(w io.Writer) error {
 	}
 
 	if node.isLeaf() {
-		cause = encoding.EncodeBytes(w, node.value)
+		cause = encoding.EncodeBytes(w, node.Value)
 		if cause != nil {
 			return fmt.Errorf("writing value; %w", cause)
 		}
@@ -537,7 +544,7 @@ func (node *Node) Bytes() ([]byte, error) {
 var nodeSize = uint64(unsafe.Sizeof(Node{})) + hashSize
 
 func (node *Node) varSize() uint64 {
-	return uint64(len(node.key) + len(node.value))
+	return uint64(len(node.Key) + len(node.Value))
 }
 
 func (node *Node) sizeBytes() uint64 {

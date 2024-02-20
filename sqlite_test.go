@@ -90,7 +90,7 @@ func TestBuildSqlite(t *testing.T) {
 		node := version1.GetNode()
 		lnk := NewNodeKey(1, uint32(count+1))
 		rnk := NewNodeKey(1, uint32(count+2))
-		n := &Node{key: node.Key, hash: node.Key[:32],
+		n := &Node{Key: node.Key, hash: node.Key[:32],
 			subtreeHeight: 13, size: 4, leftNodeKey: lnk, rightNodeKey: rnk}
 
 		//nodeBz.Reset()
@@ -107,8 +107,8 @@ func TestBuildSqlite(t *testing.T) {
 		err = stmt.Exec(
 			1,          // version
 			count,      // seq
-			n.key[:32], // hash
-			n.key,      // key
+			n.Key[:32], // hash
+			n.Key,      // key
 			13,         // height
 			4,          // size
 			count+1,    // l_seq

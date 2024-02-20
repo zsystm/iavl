@@ -16,8 +16,8 @@ func writeDotGraph(root *Node, lastGraph *dot.Graph) *dot.Graph {
 			return dot.Node{}
 		}
 		i++
-		nodeKey := fmt.Sprintf("%s-%d", node.key, node.subtreeHeight)
-		nodeLabel := fmt.Sprintf("%s - %d", string(node.key), node.subtreeHeight)
+		nodeKey := fmt.Sprintf("%s-%d", node.Key, node.subtreeHeight)
+		nodeLabel := fmt.Sprintf("%s - %d", string(node.Key), node.subtreeHeight)
 		n := graph.Node(nodeKey).Label(nodeLabel)
 		if _, found := lastGraph.FindNodeById(nodeKey); !found {
 			n.Attr("color", "red")

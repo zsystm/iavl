@@ -169,12 +169,12 @@ func IngestSnapshot(conn *sqlite3.Conn, prefix string, version int64, nextFn fun
 		ordinal++
 
 		node := &Node{
-			key:           snapshotNode.Key,
+			Key:           snapshotNode.Key,
 			subtreeHeight: snapshotNode.Height,
 			nodeKey:       NewNodeKey(snapshotNode.Version, uint32(ordinal)),
 		}
 		if node.subtreeHeight == 0 {
-			node.value = snapshotNode.Value
+			node.Value = snapshotNode.Value
 			node.size = 1
 			node._hash()
 			nodeBz, err := node.Bytes()
@@ -581,18 +581,18 @@ func (snap *sqliteSnapshot) restorePostOrderStep(nextFn func() (*SnapshotNode, e
 
 		uniqueVersions[snapshotNode.Version] = struct{}{}
 		node := &Node{
-			key:           snapshotNode.Key,
+			Key:           snapshotNode.Key,
 			subtreeHeight: snapshotNode.Height,
 			nodeKey:       NewNodeKey(snapshotNode.Version, uint32(ordinal)),
 		}
 
 		stackSize := len(stack)
 		if node.isLeaf() {
-			node.value = snapshotNode.Value
+			node.Value = snapshotNode.Value
 			node.size = 1
 			node._hash()
 			if !isStoreLeafValues {
-				node.value = nil
+				node.Value = nil
 			}
 
 			count++
@@ -649,17 +649,17 @@ func (snap *sqliteSnapshot) restorePreOrderStep(nextFn func() (*SnapshotNode, er
 		snap.ordinal++
 
 		node := &Node{
-			key:           snapshotNode.Key,
+			Key:           snapshotNode.Key,
 			subtreeHeight: snapshotNode.Height,
 			nodeKey:       NewNodeKey(snapshotNode.Version, uint32(ordinal)),
 		}
 
 		if node.isLeaf() {
-			node.value = snapshotNode.Value
+			node.Value = snapshotNode.Value
 			node.size = 1
 			node._hash()
 			if !isStoreLeafValues {
-				node.value = nil
+				node.Value = nil
 			}
 		} else {
 			node.leftNode, err = step()
