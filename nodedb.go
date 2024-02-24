@@ -665,6 +665,8 @@ func (ndb *nodeDB) legacyRootKey(version int64) []byte {
 }
 
 func (ndb *nodeDB) getFirstVersion() (int64, error) {
+	ndb.mtx.Lock()
+	defer ndb.mtx.Unlock()
 	if ndb.firstVersion != 0 {
 		return ndb.firstVersion, nil
 	}
@@ -704,6 +706,8 @@ func (ndb *nodeDB) getFirstVersion() (int64, error) {
 }
 
 func (ndb *nodeDB) resetFirstVersion(version int64) {
+	ndb.mtx.Lock()
+	defer ndb.mtx.Unlock()
 	ndb.firstVersion = version
 }
 
