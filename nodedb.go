@@ -365,6 +365,8 @@ func (ndb *nodeDB) writeBatch() error {
 // deleteVersion deletes a tree version from disk.
 // deletes orphans
 func (ndb *nodeDB) deleteVersion(version int64) error {
+	ndb.mtx.Lock()
+	defer ndb.mtx.Unlock()
 	rootKey, err := ndb.GetRoot(version)
 	if err != nil {
 		return err
