@@ -247,8 +247,6 @@ func (ndb *nodeDB) SaveFastNodeNoCache(node *fastnode.Node) error {
 // 1.1.0-<version of the current live state>. Returns error if storage version is incorrect or on
 // db error, nil otherwise. Requires changes to be committed after to be persisted.
 func (ndb *nodeDB) setFastStorageVersionToBatch(latestVersion int64) error {
-	ndb.mtx.Lock()
-	defer ndb.mtx.Unlock()
 	var newVersion string
 	if ndb.storageVersion >= fastStorageVersionValue {
 		// Storage version should be at index 0 and latest fast cache version at index 1
@@ -748,8 +746,6 @@ func (ndb *nodeDB) getLegacyLatestVersion() (int64, error) {
 }
 
 func (ndb *nodeDB) getLatestVersion() (int64, error) {
-	ndb.mtx.Lock()
-	defer ndb.mtx.Unlock()
 	if ndb.latestVersion != 0 {
 		return ndb.latestVersion, nil
 	}
