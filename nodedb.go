@@ -366,7 +366,6 @@ func (ndb *nodeDB) deleteVersion(version int64) error {
 	if rootKey == nil || !bytes.Equal(rootKey, literalRootKey) {
 		// if the root key is not matched with the literal root key, it means the given root
 		// is a reference root to the previous version.
-		fmt.Println("deleteVersion", version, literalRootKey)
 		if err := ndb.batch.Delete(ndb.nodeKey(literalRootKey)); err != nil {
 			return err
 		}
@@ -383,7 +382,6 @@ func (ndb *nodeDB) deleteVersion(version int64) error {
 			return err
 		}
 		// ensure that the given version is not included in the root search
-		fmt.Println("deleteVersion2", version, literalRootKey)
 		if err := ndb.batch.Delete(ndb.nodeKey(literalRootKey)); err != nil {
 			return err
 		}
@@ -565,17 +563,17 @@ func (ndb *nodeDB) DeleteVersionsTo(toVersion int64) error {
 	}
 	ndb.mtx.Unlock()
 
-	// // Delete the legacy versions
-	// if legacyLatestVersion >= first {
-	// 	// reset the legacy latest version forcibly to avoid multiple calls
-	// 	ndb.resetLegacyLatestVersion(-1)
-	// 	go func() {
-	// 		if err := ndb.deleteLegacyVersions(legacyLatestVersion); err != nil {
-	// 			ndb.logger.Error("Error deleting legacy versions", "err", err)
-	// 		}
-	// 	}()
-	// 	first = legacyLatestVersion + 1
-	// }
+	// Delete the legacy versions
+	if legacyLatestVersion >= first {
+		// reset the legacy latest version forcibly to avoid multiple calls
+		ndb.resetLegacyLatestVersion(-1)
+		go func() {
+			if err := ndb.deleteLegacyVersions(legacyLatestVersion); err != nil {
+				ndb.logger.Error("Error deleting legacy versions", "err", err)
+			}
+		}()
+		first = legacyLatestVersion + 1
+	}
 
 	for version := first; version <= toVersion; version++ {
 		if err := ndb.deleteVersion(version); err != nil {

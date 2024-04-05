@@ -1,6 +1,7 @@
 package iavl
 
 import (
+	"fmt"
 	"sync"
 
 	dbm "github.com/cosmos/iavl/db"
@@ -73,6 +74,7 @@ func (b *BatchWithFlusher) Set(key, value []byte) error {
 func (b *BatchWithFlusher) Delete(key []byte) error {
 	b.mtx.Lock()
 	defer b.mtx.Unlock()
+	fmt.Println("AAA batch delete key", key)
 
 	batchSizeAfter, err := b.estimateSizeAfterSetting(key, []byte{})
 	if err != nil {
