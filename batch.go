@@ -52,6 +52,7 @@ func (b *BatchWithFlusher) estimateSizeAfterSetting(key []byte, value []byte) (i
 func (b *BatchWithFlusher) Set(key, value []byte) error {
 	b.mtx.Lock()
 	defer b.mtx.Unlock()
+	fmt.Println("AAA batch set key", key, "value", value)
 
 	batchSizeAfter, err := b.estimateSizeAfterSetting(key, value)
 	if err != nil {
