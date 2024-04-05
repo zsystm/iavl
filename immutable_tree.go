@@ -185,6 +185,7 @@ func (t *ImmutableTree) Get(key []byte) ([]byte, error) {
 	if !t.skipFastStorageUpgrade {
 		// attempt to get a FastNode directly from db/cache.
 		// if call fails, fall back to the original IAVL logic in place.
+		fmt.Println("t.ndb.GetFastNode(key)", key)
 		fastNode, err := t.ndb.GetFastNode(key)
 		if err != nil {
 			_, result, err := t.root.get(t, key)
@@ -195,15 +196,19 @@ func (t *ImmutableTree) Get(key []byte) ([]byte, error) {
 			// If the tree is of the latest version and fast node is not in the tree
 			// then the regular node is not in the tree either because fast node
 			// represents live state.
+			fmt.Println("fastNode is nil t.version", t.version)
 			if t.version == t.ndb.latestVersion {
 				return nil, nil
 			}
 
 			_, result, err := t.root.get(t, key)
+			fmt.Println("result", result)
+			fmt.Println("err", err)
 			return result, err
 		}
 
 		if fastNode.GetVersionLastUpdatedAt() <= t.version {
+			fmt.Println("fastNode.GetVersionLastUpdatedAt() <= t.version", fastNode.GetValue())
 			return fastNode.GetValue(), nil
 		}
 	}
@@ -211,6 +216,7 @@ func (t *ImmutableTree) Get(key []byte) ([]byte, error) {
 	// otherwise skipFastStorageUpgrade is true or
 	// the cached node was updated later than the current tree. In this case,
 	// we need to use the regular stategy for reading from the current tree to avoid staleness.
+	fmt.Println("otherwise skipFastStorageUpgrade is true or")
 	_, result, err := t.root.get(t, key)
 	return result, err
 }

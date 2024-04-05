@@ -398,6 +398,7 @@ func (ndb *nodeDB) deleteVersion(version int64) error {
 // deleteLegacyNodes deletes all legacy nodes with the given version from disk.
 // NOTE: This is only used for DeleteVersionsFrom.
 func (ndb *nodeDB) deleteLegacyNodes(version int64, nk []byte) error {
+	fmt.Println("deleteLegacyNodes", version, nk)
 	node, err := ndb.GetNode(nk)
 	if err != nil {
 		return err
@@ -496,9 +497,9 @@ func (ndb *nodeDB) DeleteVersionsFrom(fromVersion int64) error {
 			var version int64
 			legacyRootKeyFormat.Scan(k, &version)
 			// // delete the legacy nodes
-			// if err := ndb.deleteLegacyNodes(version, v); err != nil {
-			// 	return err
-			// }
+			if err := ndb.deleteLegacyNodes(version, v); err != nil {
+				return err
+			}
 			// it will skip the orphans because orphans will be removed at once in `deleteLegacyVersions`
 			// delete the legacy root
 			return ndb.batch.Delete(k)

@@ -375,6 +375,7 @@ func (node *Node) get(t *ImmutableTree, key []byte) (index int64, value []byte, 
 	if bytes.Compare(key, node.key) < 0 {
 		leftNode, err := node.getLeftNode(t)
 		if err != nil {
+			fmt.Println("get left node error")
 			return 0, nil, err
 		}
 
@@ -383,11 +384,13 @@ func (node *Node) get(t *ImmutableTree, key []byte) (index int64, value []byte, 
 
 	rightNode, err := node.getRightNode(t)
 	if err != nil {
+		fmt.Println("get right node error")
 		return 0, nil, err
 	}
 
 	index, value, err = rightNode.get(t, key)
 	if err != nil {
+		fmt.Println("get right node error 2")
 		return 0, nil, err
 	}
 
