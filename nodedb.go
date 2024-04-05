@@ -495,10 +495,10 @@ func (ndb *nodeDB) DeleteVersionsFrom(fromVersion int64) error {
 		if err := ndb.traverseRange(legacyRootKeyFormat.Key(fromVersion), legacyRootKeyFormat.Key(legacyLatestVersion+1), func(k, v []byte) error {
 			var version int64
 			legacyRootKeyFormat.Scan(k, &version)
-			// delete the legacy nodes
-			if err := ndb.deleteLegacyNodes(version, v); err != nil {
-				return err
-			}
+			// // delete the legacy nodes
+			// if err := ndb.deleteLegacyNodes(version, v); err != nil {
+			// 	return err
+			// }
 			// it will skip the orphans because orphans will be removed at once in `deleteLegacyVersions`
 			// delete the legacy root
 			return ndb.batch.Delete(k)
