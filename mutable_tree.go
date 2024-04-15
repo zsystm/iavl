@@ -236,9 +236,9 @@ func (tree *MutableTree) set(key []byte, value []byte) (orphans []*Node, updated
 	}
 
 	orphans = tree.prepareOrphansSlice()
-	fmt.Printf("[%s]call recursiveSet, key: %s, root.height: %d, root.size: %d", time.Now().Format("15:04:05.000"), hex.EncodeToString(key), tree.ImmutableTree.root.height, tree.ImmutableTree.root.size)
+	fmt.Printf("[%s]call recursiveSet, key: %s, root.height: %d, root.size: %d\n", time.Now().Format("15:04:05.000"), hex.EncodeToString(key), tree.ImmutableTree.root.height, tree.ImmutableTree.root.size)
 	tree.ImmutableTree.root, updated, err = tree.recursiveSet(tree.ImmutableTree.root, key, value, &orphans)
-	fmt.Printf("[%s]done recursiveSet, key: %s, root.height: %d, root.size: %d", time.Now().Format("15:04:05.000"), hex.EncodeToString(key), tree.ImmutableTree.root.height, tree.ImmutableTree.root.size)
+	fmt.Printf("[%s]done recursiveSet, key: %s, root.height: %d, root.size: %d\n", time.Now().Format("15:04:05.000"), hex.EncodeToString(key), tree.ImmutableTree.root.height, tree.ImmutableTree.root.size)
 	return orphans, updated, err
 }
 
