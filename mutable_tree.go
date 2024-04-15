@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	dbm "github.com/tendermint/tm-db"
 
 	"github.com/cosmos/iavl/internal/logger"
+	gethcommon "github.com/ethereum/go-ethereum/common"
 )
 
 // commitGap after upgrade/delete commitGap FastNodes when commit the batch
@@ -234,7 +236,9 @@ func (tree *MutableTree) set(key []byte, value []byte) (orphans []*Node, updated
 	}
 
 	orphans = tree.prepareOrphansSlice()
+	fmt.Printf("[%s]call recursiveSet, key: %s, root.height: %d, root.size: %d", time.Now().Format("15:04:05.000"), gethcommon.Bytes2Hex(key), tree.ImmutableTree.root.height, tree.ImmutableTree.root.size)
 	tree.ImmutableTree.root, updated, err = tree.recursiveSet(tree.ImmutableTree.root, key, value, &orphans)
+	fmt.Printf("[%s]done recursiveSet, key: %s, root.height: %d, root.size: %d", time.Now().Format("15:04:05.000"), gethcommon.Bytes2Hex(key), tree.ImmutableTree.root.height, tree.ImmutableTree.root.size)
 	return orphans, updated, err
 }
 
